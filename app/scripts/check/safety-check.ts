@@ -27,5 +27,12 @@ for (const d of [L('red'), L('red'), L('green'), L('red'), L('green'), L('green'
   w.feed(d);
 console.log('light watcher said:\n  ' + said.join('\n  '));
 if (said.length !== 2) bad++; // red once, then green once: the single-frame flips are ignored
+// A pelican crossing: red for the traffic and green for people in one frame.
+const pel = { lights: [{ colour: 'red' as const, confidence: 0.84, box: [0, 0, 1, 1] as [number, number, number, number] }, { colour: 'green' as const, confidence: 0.67, box: [0, 0, 1, 1] as [number, number, number, number] }], objects: [], brightness: 100, ms: 1 };
+const said2: string[] = [];
+const w2 = createLightWatcher((s) => said2.push(s));
+w2.feed(pel); w2.feed(pel);
+console.log('pelican crossing →', said2.join(', '));
+if (said2[0] !== 'mixed') bad++;
 console.log(bad ? `FAILED (${bad})` : 'all safety checks passed');
 process.exit(bad ? 1 : 0);

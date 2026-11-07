@@ -12,9 +12,10 @@
     "pack": "node scripts/pack/build-pack.mjs --radius 4000 --name \"Stratford and the Olympic Park\"",
     "check:nav": "npx -y tsx@4.20.6 scripts/check/nav-check.ts",
     "map:offline": "node scripts/map/fetch-offline-map.mjs",
-    "sidecar": "python3 sidecar/server.py",
+    "sidecar": "sh -c 'P=sidecar/.venv/bin/python; [ -x \"$P\" ] || P=python3; exec \"$P\" sidecar/server.py'",
     "sidecar:mock": "SIDECAR_MOCK=1 python3 sidecar/server.py",
-    "check:safety": "npx -y tsx@4.20.6 scripts/check/safety-check.ts"
+    "check:safety": "npx -y tsx@4.20.6 scripts/check/safety-check.ts",
+    "sidecar:setup": "python3 -m venv sidecar/.venv && sidecar/.venv/bin/pip install -r sidecar/requirements.txt"
   },
   "dependencies": {
     "@fontsource/atkinson-hyperlegible": "^5.3.0",

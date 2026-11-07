@@ -198,7 +198,8 @@ export function createGuidance(opts: GuidanceOptions): Guidance {
       const startWp = route.waypoints.find((w) => w.kind === 'start');
       if (startWp) {
         done.add(startWp.id);
-        say({ text: startWp.instruction });
+        // The person just pressed Start: say it now, over anything still playing.
+        say({ text: startWp.instruction, priority: 'interrupt' });
       }
       unsub = source.subscribe(onPosition);
       emit();

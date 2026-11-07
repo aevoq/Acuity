@@ -6,12 +6,13 @@
 import type { Detection } from './sidecar';
 import { makeSafe } from './safety';
 
-export type Signal = 'red' | 'amber' | 'green' | 'unknown' | 'none';
+export type Signal = 'red' | 'amber' | 'green' | 'mixed' | 'unknown' | 'none';
 
 export const SIGNAL_WORDS: Record<Signal, string> = {
   red: 'Red',
   amber: 'Amber',
   green: 'Green',
+  mixed: 'Red and green both lit',
   unknown: 'Light, colour unclear',
   none: 'No light seen',
 };
@@ -20,13 +21,21 @@ const SAY: Record<Signal, string> = {
   red: 'The traffic light looks red.',
   amber: 'The traffic light looks amber.',
   green: 'The traffic light looks green. Check with your cane or dog and listen to the traffic.',
+  // At a pelican crossing the traffic lights show red while the green man is lit:
+  // with both in view we cannot tell which one is yours, so we say exactly that.
+  mixed: 'I can see a red light and a green light. One may be for the traffic and one for you: I cannot tell which is yours.',
   unknown: "I can see a traffic light, but I can't tell which colour is lit.",
   none: "I can't see a traffic light. Point the camera across the road, at head height.",
 };
 
-/** One frame's reading: the most confident light, or none. */
+/** Lights this sure count as "seen" when deciding between colours. */
+const SURE = 0.5;
+
+/** One frame's reading: the most confident light, or "mixed" when confident lights disagree, or none. */
 export function readingOf(d: Detection): Signal {
   if (!d.lights.length) return 'none';
+  const sure = new Set(d.lights.filter((l) => l.confidence >= SURE && l.colour !== 'unknown').map((l) => l.colour));
+  if ((sure.has('red') || sure.has('amber')) && sure.has('green')) return 'mixed';
   return [...d.lights].sort((a, b) => b.confidence - a.confidence)[0].colour;
 }
 

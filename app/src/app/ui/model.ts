@@ -24,6 +24,8 @@ export interface ResultItem {
   target: Target;
   /** Walking distance, or straight-line × 1.3 when unreachable. */
   walk: number;
+  /** Outside the downloaded area: straight-line distance, reach it by transport or taxi. */
+  far?: boolean;
 }
 
 export interface Answer {

@@ -147,12 +147,35 @@ export async function planJourneys(
   return { ok: true, journeys };
 }
 
+/** "bus 108", "the Central line", "the Elizabeth line", "the DLR", "a Southeastern train". */
+export function legName(l: Leg): string {
+  const line = l.line?.trim() || null;
+  switch (l.mode) {
+    case 'bus':
+      return `bus ${line ?? ''}`.trim();
+    case 'tube':
+      return line ? `the ${line.replace(/ line$/i, '')} line` : 'the Tube';
+    case 'elizabeth-line':
+      return 'the Elizabeth line';
+    case 'dlr':
+      return 'the DLR';
+    case 'overground':
+      return line ? `the ${line.replace(/ line$/i, '')} line, Overground` : 'the Overground';
+    case 'national-rail':
+      return line ? `a ${line} train` : 'a train';
+    case 'tram':
+      return 'the tram';
+    default:
+      return line ?? 'transport';
+  }
+}
+
 /** One spoken sentence for a whole journey, from TfL's data only. */
 export function journeySentence(j: Journey): string {
   const parts = j.legs.map((l) => {
     if (l.mode === 'walking') return `walk ${l.minutes} minute${l.minutes === 1 ? '' : 's'}`;
     const n = l.stops.length;
-    return `${l.mode === 'bus' ? `bus ${l.line}` : `${l.line ?? MODE_WORD[l.mode]}${l.mode === 'tube' ? ' line' : ''}`} for ${n} stop${n === 1 ? '' : 's'} to ${l.to.name}`;
+    return `${legName(l)} for ${n} stop${n === 1 ? '' : 's'} to ${l.to.name}`;
   });
   return `${j.minutes} minutes, leaving at ${clock(j.start)}, arriving ${clock(j.arrive)}: ${parts.join(', then ')}.${j.legs.some((l) => l.disrupted) ? ' TfL reports disruption on this route.' : ''}`;
 }
@@ -161,8 +184,7 @@ export function journeySentence(j: Journey): string {
 export function boardSentence(l: Leg): string {
   const at = [l.from.name, l.from.indicator].filter(Boolean).join(', ');
   const n = l.stops.length;
-  const what = l.mode === 'bus' ? `bus ${l.line}` : `the ${l.line ?? MODE_WORD[l.mode]}${l.mode === 'tube' ? ' line' : ''}`;
-  return `At ${at}, take ${what}${l.towards ? ` towards ${l.towards}` : ''}. ${n} stop${n === 1 ? '' : 's'} to ${l.to.name}.`;
+  return `At ${at}, take ${legName(l)}${l.towards ? ` towards ${l.towards}` : ''}. ${n} stop${n === 1 ? '' : 's'} to ${l.to.name}.`;
 }
 
 export const fmtClock = clock;

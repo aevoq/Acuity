@@ -20,3 +20,12 @@ onboarding/onboarding-data/
 .verify-cache/
 tools/core-adapters/.check/
 .adapter-reviews/
+
+# Hackathon camera + voice service: local models, voices and caches (downloaded, not committed)
+app/sidecar/.venv/
+Abdullah/*.onnx
+Abdullah/*.onnx.json
+Abdullah/voice_cache/
+Abdullah/tmp_audio/
+Acuity/*.pt
+Acuity/*.ts

@@ -1130,6 +1130,7 @@ dialog.sheet.camera {
 .signal.red { background: #b71c1c; border-color: #b71c1c; color: #ffffff; }
 .signal.green { background: #1b5e20; border-color: #1b5e20; color: #ffffff; }
 .signal.amber { background: #ffb300; border-color: #ffb300; color: #111111; }
+.signal.mixed { background: #4a148c; border-color: #4a148c; color: #ffffff; }
 .cam-answer {
   border-top: 1px solid #e4e0d8;
   padding-top: 10px;

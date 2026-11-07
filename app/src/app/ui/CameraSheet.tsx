@@ -278,7 +278,7 @@ export function CameraSheet(p: CameraSheetProps) {
             <p className="answer-text" style={{ fontSize: 20 }}>
               {answer.a}
             </p>
-            <p className="fine">{answer.via}</p>
+            <p className="fine">{answer.via}. Camera answers can be wrong, especially small text: check anything important with a person.</p>
           </div>
         )}
 

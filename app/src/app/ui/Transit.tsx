@@ -2,7 +2,7 @@
 // Public transport / Taxi), TfL journey options, and the taxi hand-off. Also
 // the card for a Tube or train leg, where there is no GPS to follow.
 
-import { MODE_ICON, MODE_WORD, fmtClock, type Journey, type Leg } from '../../transit/journeys';
+import { MODE_ICON, MODE_WORD, fmtClock, legName, type Journey, type Leg } from '../../transit/journeys';
 import { Icon } from './Controls';
 
 export type Travel = 'walk' | 'transit' | 'taxi';
@@ -50,10 +50,10 @@ function LegChips({ legs }: { legs: Leg[] }) {
 export function legWords(l: Leg): { icon: string; title: string; detail: string } {
   if (l.mode === 'walking') return { icon: 'directions_walk', title: `Walk ${l.minutes} min`, detail: `to ${l.to.name}` };
   const n = l.stops.length;
-  const what = l.mode === 'bus' ? `Bus ${l.line}` : `${l.line ?? MODE_WORD[l.mode]}${l.mode === 'tube' ? ' line' : ''}`;
+  const what = legName(l).replace(/^(the|a) /, '');
   return {
     icon: MODE_ICON[l.mode],
-    title: `${what}${l.towards ? ` towards ${l.towards}` : ''}`,
+    title: `${what.charAt(0).toUpperCase()}${what.slice(1)}${l.towards ? ` towards ${l.towards}` : ''}`,
     detail: `From ${[l.from.name, l.from.indicator].filter(Boolean).join(', ')} · ${n} stop${n === 1 ? '' : 's'} to ${l.to.name} · ${fmtClock(l.departure)}`,
   };
 }
@@ -76,7 +76,7 @@ export function TransitPanel(p: TransitPanelProps) {
     <>
       <ul className="rows ruled" aria-label="Public transport options">
         {p.journeys.map((jj, i) => {
-          const spoken = jj.legs.map((l) => (l.mode === 'walking' ? `walk ${l.minutes} minutes` : `${MODE_WORD[l.mode]} ${l.line ?? ''}`)).join(', then ');
+          const spoken = jj.legs.map((l) => (l.mode === 'walking' ? `walk ${l.minutes} minutes` : legName(l))).join(', then ');
           return (
             <li key={i}>
               <button

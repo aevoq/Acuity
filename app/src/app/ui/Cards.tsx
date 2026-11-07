@@ -145,10 +145,17 @@ export function ResultsCard({ title, results, me, onClose, onChoose }: ResultsCa
                   {catLabel(r.target.category)} · {fmtDist(r.walk)} · {directionFrom(me, r.target)}
                 </span>
               </span>
-              <span className="row-end">
-                <strong>{walkMinutes(r.walk)} min</strong>
-                <span>walk</span>
-              </span>
+              {r.far ? (
+                <span className="row-end">
+                  <strong>{fmtDist(r.walk)}</strong>
+                  <span>away</span>
+                </span>
+              ) : (
+                <span className="row-end">
+                  <strong>{walkMinutes(r.walk)} min</strong>
+                  <span>walk</span>
+                </span>
+              )}
             </button>
           </li>
         ))}

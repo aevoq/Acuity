@@ -25,6 +25,7 @@ import { useNetworkMode } from '../net/useConnectivity';
 import { loadPack, type PackIndex } from '../pack/pack';
 import { findPlaces } from '../places/search';
 import { createTools } from '../places/tools';
+import { geocodeLondon } from '../places/geocode';
 import { createGpsSource, gpsAvailable } from '../position/gps';
 import { createSimWalk, type SimWalk } from '../sim/simWalk';
 import { busArrivals, routesAt } from '../transit/arrivals';
@@ -114,7 +115,9 @@ export function App() {
   // ---------------------------------------------------------------- output
   /** Every prompt: live region (always) + voice (when wanted). Stable, so guidance can hold it. */
   const speak = useCallback((req: SpeakRequest | string) => {
-    const r = typeof req === 'string' ? { text: req } : req;
+    // A plain string is the answer to something the person just did (a button, a question):
+    // it replaces whatever is being said. Guidance passes a SpeakRequest with its own priority.
+    const r: SpeakRequest = typeof req === 'string' ? { text: req, priority: 'interrupt' } : req;
     if (!r.text) return;
     lastSaid.current = r.text;
     // Clear first, so the same words twice in a row are announced twice.
@@ -226,6 +229,19 @@ export function App() {
     setCopied(false);
     setFollow(false);
     setMode('place');
+    if (!inPack(t)) {
+      // Walking directions only exist inside the downloaded area: don't snap a far place to its edge.
+      setRoute(null);
+      const msg = `${targetName(t)} is outside the downloaded walking area (4 kilometres around UCL East), so there are no walking directions.`;
+      setNoRouteText(msg);
+      mapRef.current?.fitPoints([meRef.current, t], 60);
+      if (connectivity.mode() === 'online') {
+        speak(`${msg} Showing public transport.`);
+        setTravel('transit');
+        void fetchTransitFor(t);
+      } else speak(`${msg} Public transport and taxis need a connection.`);
+      return;
+    }
     const r = plan(t, profileId);
     if (r) {
       mapRef.current?.fitPoints(r.path, 30);
@@ -251,10 +267,14 @@ export function App() {
   // ---------------------------------------------------------------- search
   const walkTo = (t: Target) => router?.walkingDistance(meRef.current, t) ?? distance(meRef.current, t) * 1.3;
 
+  /** Inside the downloaded area, where walking directions exist. */
+  const inPack = (p: LatLng) => !!index && distance(p, index.pack.center) <= index.pack.radiusMeters - 50;
+
   /** Show results for a place query. Returns how many were found. */
-  const search = (q: string, label?: string, quietIfEmpty = false): number => {
+  const search = async (q: string, label?: string, quietIfEmpty = false): Promise<number> => {
     if (!index) return 0;
     let items: ResultItem[];
+    let far = false;
     if (/^bus ?stops?$/i.test(q.trim())) {
       items = index
         .busStopsNear(meRef.current, 800, 12)
@@ -265,19 +285,34 @@ export function App() {
     } else {
       items = findPlaces(index, router, meRef.current, q, 8, 8).map((h) => ({ target: placeTarget(h.place), walk: h.walkMeters ?? h.straightMeters * 1.3 }));
     }
+    // Nothing in the downloaded area: search all of London (online).
+    if (!items.length && !/^bus ?stops?$/i.test(q.trim()) && connectivity.mode() === 'online') {
+      setBusy(true);
+      const g = await geocodeLondon(q, meRef.current);
+      setBusy(false);
+      if (g.ok && g.places.length) {
+        far = true;
+        items = g.places.map((p) => ({ target: placeTarget(p), walk: distance(meRef.current, p), far: !inPack(p) }));
+      }
+    }
     if (!items.length && quietIfEmpty) return 0;
     stopMoving();
     setResults(items);
-    setResultsTitle(items.length ? `${label ?? `“${q}”`} nearby` : 'No results');
+    setResultsTitle(items.length ? (far ? `${label ?? `“${q}”`} in London` : `${label ?? `“${q}”`} nearby`) : 'No results');
     setAnswer(null);
     setSel(null);
     setRoute(null);
     setFollow(false);
     setMode('results');
-    if (!items.length) speak(`I couldn't find "${q}" in the downloaded area.`);
+    if (!items.length)
+      speak(connectivity.mode() === 'offline' ? `I couldn't find "${q}" in the downloaded area. Searching all of London needs a connection.` : `I couldn't find "${q}".`);
     else {
       const h = items[0];
-      speak(`${items.length} result${items.length === 1 ? '' : 's'}. Nearest: ${targetName(h.target)}, about ${Math.round(h.walk / 10) * 10} metres walk.`);
+      speak(
+        h.far
+          ? `${items.length} result${items.length === 1 ? '' : 's'} in London. First: ${targetName(h.target)}, ${(h.walk / 1000).toFixed(1)} kilometres away, outside the downloaded area: public transport or taxi.`
+          : `${items.length} result${items.length === 1 ? '' : 's'}. Nearest: ${targetName(h.target)}, about ${Math.round(h.walk / 10) * 10} metres walk.`,
+      );
       mapRef.current?.fitPoints([meRef.current, ...items.slice(0, 5).map((i) => i.target)]);
     }
     return items.length;
@@ -286,7 +321,7 @@ export function App() {
   const pickChip = (c: (typeof CATEGORIES)[number]) => {
     setChip(c.label);
     setQuery(c.label);
-    search(c.query, c.label);
+    void search(c.query, c.label);
   };
 
   // ---------------------------------------------------------------- questions
@@ -338,7 +373,7 @@ export function App() {
     setAnswer(a);
     setMode('explore');
     setResults([]);
-    speak({ text: res.say, milestone: res.milestone });
+    speak({ text: res.say, milestone: res.milestone, priority: 'interrupt' });
     if (a.items.length) mapRef.current?.fitPoints([meRef.current, ...a.items.map((i) => i.target)]);
   };
 
@@ -364,7 +399,7 @@ export function App() {
     }
     if (qm.name === 'nearest' && qm.query) return void search(qm.query);
     // Plain words: a place search first (free, offline); Gemini only if that finds nothing.
-    if (search(text, undefined, true)) return;
+    if (await search(text, undefined, true)) return;
     if (net === 'online') {
       setBusy(true);
       const g = await geminiPickTool(text);
@@ -374,7 +409,7 @@ export function App() {
         if ((g.intent.name === 'nearest' || g.intent.name === 'navigateTo') && g.intent.query) return void search(g.intent.query);
       }
     }
-    search(text);
+    void search(text);
   };
 
   const clearSearch = () => {
@@ -505,13 +540,15 @@ export function App() {
 
   // ---------------------------------------------------------------- public transport (TfL, online)
   const transitKey = sel ? `${sel.id}|${profileId === 'stepFree'}` : '';
+  void transitKey;
 
-  const fetchTransit = async (stepFree = profileId === 'stepFree') => {
-    if (!index || !sel) return;
-    const key = `${sel.id}|${stepFree}`;
+  const fetchTransit = (stepFree = profileId === 'stepFree') => (sel ? fetchTransitFor(sel, stepFree) : Promise.resolve());
+  async function fetchTransitFor(dest: Target, stepFree = profileId === 'stepFree') {
+    if (!index) return;
+    const key = `${dest.id}|${stepFree}`;
     setTransit({ key, state: 'loading', journeys: [], message: null });
     setJourneyIdx(0);
-    const r = await planJourneys(index, meRef.current, sel, { stepFree });
+    const r = await planJourneys(index, meRef.current, dest, { stepFree });
     if (!r.ok) {
       setTransit({ key, state: 'error', journeys: [], message: r.message });
       speak(r.message);
@@ -520,7 +557,7 @@ export function App() {
     setTransit({ key, state: 'ok', journeys: r.journeys, message: null });
     speak(`${r.journeys.length} option${r.journeys.length === 1 ? '' : 's'}. Fastest: ${journeySentence(r.journeys[0])}`);
     mapRef.current?.fitPoints(r.journeys[0].legs.flatMap((l) => l.path), 30);
-  };
+  }
 
   const onTravel = (t: Travel) => {
     setTravel(t);
