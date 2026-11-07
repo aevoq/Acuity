@@ -178,15 +178,37 @@ def speak_wav(text):
     return b64
 
 
+def decode_to_mono(path, rate):
+    """
+    Any audio file the browser records (webm/opus, ogg, mp4, wav) -> float32
+    mono at `rate`, as Whisper wants it. Our own small PyAV loop:
+    faster_whisper's decode_audio() passes an option (metadata_errors) that
+    PyAV 19 removed, which made every spoken question fail with a TypeError.
+    """
+    import av
+    import numpy as np
+    chunks = []
+    with av.open(path) as container:
+        stream = next(s for s in container.streams if s.type == "audio")
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=rate)
+        for frame in container.decode(stream):
+            for out in resampler.resample(frame):
+                chunks.append(out.to_ndarray().reshape(-1))
+        for out in resampler.resample(None):   # flush what the resampler still holds
+            chunks.append(out.to_ndarray().reshape(-1))
+    if not chunks:
+        return np.zeros(0, dtype=np.float32)
+    return np.concatenate(chunks).astype(np.float32) / 32768.0
+
+
 def transcribe(audio_bytes):
     """Browser audio (webm/ogg/wav) -> text, with Abdullah's Whisper settings."""
-    from faster_whisper.audio import decode_audio
     va = state["assistant"]
     with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
         f.write(audio_bytes)
         path = f.name
     try:
-        return va.transcribe(state["whisper"], decode_audio(path, sampling_rate=va.SAMPLE_RATE))
+        return va.transcribe(state["whisper"], decode_to_mono(path, va.SAMPLE_RATE))
     finally:
         os.remove(path)
 
