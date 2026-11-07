@@ -130,6 +130,22 @@ export function SettingsDialog({ open, onClose, settings, onChange, gpsAvailable
 
         <label className="switch-row">
           <span>
+            Acuity voice guide
+            <small>Acuity greets you, asks where you want to go and guides the journey by voice.</small>
+          </span>
+          <input type="checkbox" checked={settings.acuity} onChange={(e) => onChange({ acuity: e.target.checked })} />
+        </label>
+
+        <label className="switch-row">
+          <span>
+            Listen for "Hey Acuity"
+            <small>The microphone stays on, on this device only; only "Hey Acuity…" is acted on.</small>
+          </span>
+          <input type="checkbox" checked={settings.wakeWord} disabled={!settings.acuity} onChange={(e) => onChange({ wakeWord: e.target.checked })} />
+        </label>
+
+        <label className="switch-row">
+          <span>
             Milestone sounds
             <small>A short sound before each turn, crossing, bench, stop and arrival. Plays with a screen reader too.</small>
           </span>

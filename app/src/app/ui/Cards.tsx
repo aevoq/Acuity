@@ -111,12 +111,14 @@ export function AnswerCard({ answer, me, onClose, onSayAgain, onChoose }: Answer
 export interface ResultsCardProps {
   title: string;
   results: ResultItem[];
+  /** Show loading rows (while a search runs). */
+  loading?: boolean;
   me: LatLng;
   onClose: () => void;
   onChoose: (t: Target) => void;
 }
 
-export function ResultsCard({ title, results, me, onClose, onChoose }: ResultsCardProps) {
+export function ResultsCard({ title, results, me, onClose, onChoose, loading }: ResultsCardProps) {
   return (
     <section className="card scroll" aria-labelledby="res-h" style={{ padding: '16px 20px 8px', gap: 4 }}>
       <div className="card-head">
@@ -127,7 +129,14 @@ export function ResultsCard({ title, results, me, onClose, onChoose }: ResultsCa
           <Icon name="close" />
         </button>
       </div>
-      {results.length === 0 && (
+      {loading && (
+        <div aria-hidden="true">
+          <div className="skeleton-row" />
+          <div className="skeleton-row" />
+          <div className="skeleton-row" />
+        </div>
+      )}
+      {!loading && results.length === 0 && (
         <p style={{ margin: '4px 0 12px', fontSize: 18 }} className="muted">
           Nothing matched in the downloaded area. Try a kind of place, like “chemist” or “coffee”.
         </p>

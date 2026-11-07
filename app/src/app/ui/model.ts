@@ -38,11 +38,11 @@ export interface Answer {
 
 const LABEL: Record<string, string> = {
   shop: 'Shop', supermarket: 'Supermarket', pharmacy: 'Pharmacy', cafe: 'Café', restaurant: 'Restaurant', toilets: 'Toilets',
-  station: 'Station', bus_stop: 'Bus stop', atm: 'Cash machine', hospital: 'Hospital', bench: 'Bench',
+  station: 'Station', bus_stop: 'Bus stop', atm: 'Cash machine', hospital: 'Hospital', bench: 'Bench', park: 'Park',
 };
 const ICON: Record<string, string> = {
   cafe: 'local_cafe', restaurant: 'restaurant', shop: 'storefront', supermarket: 'shopping_cart', pharmacy: 'local_pharmacy',
-  hospital: 'local_hospital', toilets: 'wc', atm: 'local_atm', station: 'train', bus_stop: 'directions_bus', bench: 'chair',
+  hospital: 'local_hospital', toilets: 'wc', atm: 'local_atm', station: 'train', bus_stop: 'directions_bus', bench: 'chair', park: 'park',
 };
 export const catLabel = (c: string) => LABEL[c] ?? 'Place';
 export const catIcon = (c: string) => ICON[c] ?? 'place';

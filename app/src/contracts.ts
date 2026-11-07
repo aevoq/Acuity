@@ -86,7 +86,7 @@ export interface GraphEdge {
 
 export type PlaceCategory =
   | 'shop' | 'supermarket' | 'pharmacy' | 'cafe' | 'restaurant' | 'toilets'
-  | 'station' | 'bus_stop' | 'bench' | 'atm' | 'hospital' | 'other';
+  | 'station' | 'bus_stop' | 'bench' | 'atm' | 'hospital' | 'park' | 'other';
 
 export interface Place extends LatLng {
   id: string;

@@ -77,15 +77,17 @@ export interface SearchBarProps {
   busy: boolean;
   listening: boolean;
   onMic: () => void;
+  /** Acuity is typing into it. */
+  typing?: boolean;
 }
 
-export function SearchBar({ query, onQuery, onSubmit, onClear, busy, listening, onMic }: SearchBarProps) {
+export function SearchBar({ query, onQuery, onSubmit, onClear, busy, listening, onMic, typing }: SearchBarProps) {
   const submit = (e: FormEvent) => {
     e.preventDefault();
     onSubmit();
   };
   return (
-    <form className="searchbar" role="search" onSubmit={submit}>
+    <form className={`searchbar${typing ? ' typing' : ''}`} role="search" onSubmit={submit}>
       <span className="search-lead">
         <Icon name="search" />
       </span>

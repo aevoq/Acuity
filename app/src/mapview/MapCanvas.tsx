@@ -24,7 +24,7 @@ import { registerOfmProtocol, STYLE_URL } from './ofmProtocol';
 export const CATEGORY_COLOR: Record<string, string> = {
   cafe: 'oklch(0.58 0.15 55)', restaurant: 'oklch(0.58 0.15 55)', shop: 'oklch(0.5 0.15 265)', supermarket: 'oklch(0.5 0.15 265)',
   pharmacy: 'oklch(0.52 0.17 15)', hospital: 'oklch(0.52 0.17 15)', toilets: 'oklch(0.5 0.15 310)', atm: 'oklch(0.5 0.12 200)',
-  station: 'oklch(0.45 0.12 240)', bus_stop: 'oklch(0.5 0.17 25)', other: '#555555', bench: '#555555',
+  station: 'oklch(0.45 0.12 240)', bus_stop: 'oklch(0.5 0.17 25)', park: 'oklch(0.5 0.13 145)', other: '#555555', bench: '#555555',
 };
 export const categoryColor = (c: PlaceCategory | string) => CATEGORY_COLOR[c] ?? '#555555';
 

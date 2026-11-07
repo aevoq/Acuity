@@ -72,7 +72,15 @@ export const askAssistant = (q: { question?: string; audio?: string; image?: str
   call<AskResult>('/assistant/ask', q, 60000);
 
 /** Abdullah's Whisper settings, speech to text only (the main mic button). */
-export const transcribeSpeech = (audio: string) => call<{ text: string }>('/speech/transcribe', { audio }, 30000);
+export const transcribeSpeech = (audio: string, hint?: string) => call<{ text: string }>('/speech/transcribe', { audio, hint }, 30000);
+
+export interface AgentIntent {
+  intent: string;
+  query?: string;
+  side?: 'left' | 'right' | 'ahead' | 'behind';
+}
+/** gemma3 (in the local service) picks one of the app's tools for a request it can't parse. */
+export const agentIntent = (utterance: string) => call<AgentIntent>('/agent/intent', { utterance }, 15000);
 
 /** Abdullah's Piper voice for any text (base64 WAV), or null when it isn't available. */
 export async function piperWav(text: string): Promise<string | null> {

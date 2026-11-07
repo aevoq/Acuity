@@ -20,9 +20,13 @@ export interface Settings {
   earcons: boolean;
   /** Vibrate for milestones (Android phones). */
   vibrate: boolean;
+  /** Acuity, the voice guide: greets you and runs the journey by voice. */
+  acuity: boolean;
+  /** Listen for "Hey Acuity" (the microphone stays on, on this device). */
+  wakeWord: boolean;
 }
 
-export const DEFAULT_SETTINGS: Settings = { mapStyle: 'standard', textSize: 1, voice: true, speechRate: 1, screenReader: false, realGps: false, earcons: true, vibrate: true };
+export const DEFAULT_SETTINGS: Settings = { mapStyle: 'standard', textSize: 1, voice: true, speechRate: 1, screenReader: false, realGps: false, earcons: true, vibrate: true, acuity: true, wakeWord: true };
 export const TEXT_SIZES = [
   { label: 'Default', value: 1 },
   { label: 'Large', value: 1.15 },

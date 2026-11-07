@@ -40,6 +40,9 @@ import { runIntent } from './runIntent';
 import { useSettings } from './settings';
 import { onSpeakingChange, say, stopSpeaking } from './speaker';
 import { createListener, type Listener } from './listen';
+import { createAcuity } from '../agent/acuity';
+import { afterWakeWord, createEars } from '../agent/ears';
+import { AcuityBar, Welcome, type AcuityState, type Caption } from './ui/AcuityBar';
 import { playEarcon, SOUND_NAMES } from './earcons';
 import { CameraSheet } from './ui/CameraSheet';
 import { AnswerCard, ArrivedCard, ExploreCard, PlaceCard, ResultsCard, type BusSetup } from './ui/Cards';
@@ -73,6 +76,22 @@ export function App() {
   const [mode, setMode] = useState<Mode>('explore');
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
+  const [searching, setSearching] = useState(false);
+  /** The latest results and route, current immediately (Acuity reads them before React re-renders). */
+  const resultsNow = useRef<ResultItem[]>([]);
+  const routeNow = useRef<Route | null>(null);
+  const [typing, setTyping] = useState(false);
+  // Acuity
+  const [welcome, setWelcome] = useState(() => settings.acuity);
+  const [acuityOn, setAcuityOn] = useState(false);
+  const acuityOnRef = useRef(false);
+  acuityOnRef.current = acuityOn;
+  const [earsState, setEarsState] = useState<AcuityState>('off');
+  const [captions, setCaptions] = useState<Caption[]>([]);
+  const captionId = useRef(0);
+  const addCaption = useCallback((who: Caption['who'], text: string) => {
+    setCaptions((c) => [...c.slice(-5), { id: captionId.current++, who, text }]);
+  }, []);
   const [chip, setChip] = useState<string | null>(null);
   const [results, setResults] = useState<ResultItem[]>([]);
   const [resultsTitle, setResultsTitle] = useState('');
@@ -140,12 +159,13 @@ export function App() {
     const r: SpeakRequest = typeof req === 'string' ? { text: req, priority: 'interrupt' } : req;
     if (!r.text) return;
     lastSaid.current = r.text;
+    if (acuityOnRef.current) addCaption('acuity', r.text);
     // Clear first, so the same words twice in a row are announced twice.
     setAnnounce('');
     requestAnimationFrame(() => setAnnounce(r.text));
     const s = settingsRef.current;
     say(r, { enabled: s.voice && !s.screenReader, rate: s.speechRate, earcons: s.earcons, vibrate: s.vibrate });
-  }, []);
+  }, [addCaption]);
 
   /** Live region only (no voice). */
   const announceOnly = useCallback((text: string) => {
@@ -237,6 +257,7 @@ export function App() {
   const plan = (t: Target, prof: RouteProfileId, from: Position = meRef.current): Route | null => {
     if (!router) return null;
     const r = router.route(from, t, prof, targetName(t));
+    routeNow.current = r;
     setRoute(r);
     setNoRouteText(r ? null : `No ${PROFILE_LABELS[prof].toLowerCase()} route to ${targetName(t)} in the downloaded area.`);
     return r;
@@ -245,7 +266,7 @@ export function App() {
   const routeSentence = (r: Route) =>
     `${r.destinationName}. ${walkMinutes(r.lengthMeters)} minute walk, ${Math.round(r.lengthMeters / 10) * 10} metres, ${r.crossings} crossing${r.crossings === 1 ? '' : 's'}.${r.tradeOff ? ` ${r.tradeOff}` : ''}`;
 
-  const choose = (t: Target) => {
+  const choose = (t: Target, quiet = false) => {
     stopMoving();
     setSel(t);
     setAnswer(null);
@@ -261,21 +282,22 @@ export function App() {
     setMode('place');
     if (!inPack(t)) {
       // Walking directions only exist inside the downloaded area: don't snap a far place to its edge.
+      routeNow.current = null;
       setRoute(null);
       const msg = `${targetName(t)} is outside the downloaded walking area (4 kilometres around UCL East), so there are no walking directions.`;
       setNoRouteText(msg);
       mapRef.current?.fitPoints([meRef.current, t], 60);
       if (connectivity.mode() === 'online') {
-        speak(`${msg} Showing public transport.`);
+        if (!quiet) speak(`${msg} Showing public transport.`);
         setTravel('transit');
         void fetchTransitFor(t);
-      } else speak(`${msg} Public transport and taxis need a connection.`);
+      } else if (!quiet) speak(`${msg} Public transport and taxis need a connection.`);
       return;
     }
     const r = plan(t, profileId);
     if (r) {
       mapRef.current?.fitPoints(r.path, 30);
-      speak(routeSentence(r));
+      if (!quiet) speak(routeSentence(r));
     } else {
       mapRef.current?.flyTo(t, 0.6);
       speak(`No ${PROFILE_LABELS[profileId].toLowerCase()} route to ${targetName(t)} in the downloaded area.`);
@@ -301,8 +323,21 @@ export function App() {
   const inPack = (p: LatLng) => !!index && distance(p, index.pack.center) <= index.pack.radiusMeters - 50;
 
   /** Show results for a place query. Returns how many were found. */
-  const search = async (q: string, label?: string, quietIfEmpty = false): Promise<number> => {
+  const search = async (q: string, label?: string, quietIfEmpty = false, quiet = false): Promise<number> => {
     if (!index) return 0;
+    const t0 = performance.now();
+    if (quiet) {
+      // Acuity is searching: show it, as a person typing would see it.
+      stopMoving();
+      setAnswer(null);
+      setSel(null);
+      routeNow.current = null;
+      setRoute(null);
+      setResults([]);
+      setResultsTitle(`Searching for “${q}”…`);
+      setSearching(true);
+      setMode('results');
+    }
     let items: ResultItem[];
     let far = false;
     if (/^bus ?stops?$/i.test(q.trim())) {
@@ -325,15 +360,23 @@ export function App() {
         items = g.places.map((p) => ({ target: placeTarget(p), walk: distance(meRef.current, p), far: !inPack(p) }));
       }
     }
+    if (quiet) await new Promise((r) => setTimeout(r, Math.max(0, 700 - (performance.now() - t0)))); // let the loading show
+    setSearching(false);
+    resultsNow.current = items;
     if (!items.length && quietIfEmpty) return 0;
     stopMoving();
     setResults(items);
     setResultsTitle(items.length ? (far ? `${label ?? `“${q}”`} in London` : `${label ?? `“${q}”`} nearby`) : 'No results');
     setAnswer(null);
     setSel(null);
+    routeNow.current = null;
     setRoute(null);
     setFollow(false);
     setMode('results');
+    if (quiet) {
+      if (items.length) mapRef.current?.fitPoints([meRef.current, ...items.slice(0, 5).map((i) => i.target)]);
+      return items.length;
+    }
     if (!items.length)
       speak(connectivity.mode() === 'offline' ? `I couldn't find "${q}" in the downloaded area. Searching all of London needs a connection.` : `I couldn't find "${q}".`);
     else {
@@ -494,6 +537,7 @@ export function App() {
     setResults([]);
     setAnswer(null);
     setSel(null);
+    routeNow.current = null;
     setRoute(null);
     setMode('explore');
     setFollow(true);
@@ -532,6 +576,7 @@ export function App() {
   const finish = () => {
     stopMoving();
     setSel(null);
+    routeNow.current = null;
     setRoute(null);
     setResults([]);
     setQuery('');
@@ -672,6 +717,7 @@ export function App() {
       const name = last && sel ? targetName(sel) : [leg.to.name, leg.to.indicator].filter(Boolean).join(', ');
       const r = router?.route({ ...from }, leg.to, profileId, name) ?? (leg.path.length > 1 ? pathRoute(leg.path, name) : null);
       if (!r) return speak(`I can't find a walking route to ${name}.`);
+      routeNow.current = r;
       setRoute(r);
       startWalk(r);
       return;
@@ -748,6 +794,146 @@ export function App() {
         onStartRide: startRide,
       }
     : null;
+
+  // ---------------------------------------------------------------- Acuity: the voice guide
+  /** Type into the search bar letter by letter, as a sighted user would see it. */
+  const typeQuery = (text: string) =>
+    new Promise<void>((resolve) => {
+      if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+        setQuery(text);
+        return resolve();
+      }
+      setTyping(true);
+      setQuery('');
+      let i = 0;
+      const id = setInterval(() => {
+        i++;
+        setQuery(text.slice(0, i));
+        if (i >= text.length) {
+          clearInterval(id);
+          setTyping(false);
+          setTimeout(resolve, 150);
+        }
+      }, 45);
+    });
+
+  // The brain and ears are made once; they reach the app through these refs.
+  const live = useRef({ mode, results, sel, route, gstate, travel, me });
+  live.current = { mode, results, sel, route, gstate, travel, me };
+  const act = useRef<Record<string, (...a: never[]) => unknown>>({});
+  act.current = {
+    typeQuery,
+    search: (q: string) => search(q, undefined, false, true),
+    choose: (t: Target) => choose(t, true),
+    startWalk: () => startWalk(),
+    endWalk,
+    startJourney: () => (journey ? startJourney() : speak({ text: "I'm still asking TfL. One moment, then say start again.", priority: 'queue' })),
+    showTransit: () => onTravel('transit'),
+    openTaxi: () => onTravel('taxi'),
+    openCamera: (light: boolean) => setCamera({ open: true, light }),
+    openHelp: () => setHelpOpen(true),
+    setProfile: (p: RouteProfileId) => {
+      const L = live.current;
+      if (L.mode === 'nav' && L.sel) {
+        // On a walk: a new route of that type from here.
+        setProfileId(p);
+        const r = plan(L.sel, p, sourceRef.current?.current() ?? meRef.current);
+        if (r) startWalk(r);
+      } else changeProfile(p);
+    },
+    runIntent: async (intent: Intent) => {
+      if (!index || !tools) return { ok: false, intent: intent.name, say: '' };
+      const res = await runIntent(intent, {
+        index, tools, here: sourceRef.current?.current() ?? meRef.current, guidance: guidanceRef.current, lastSaid: lastSaid.current,
+        navigateTo, openHelp: () => setHelpOpen(true),
+      });
+      // When not walking, show the answer card too: what a person tapping would see.
+      if (['explore', 'results'].includes(live.current.mode) && intent.name !== 'navigateTo' && res.say) {
+        setAnswer(answerFrom(intent, res, intent.utterance));
+        setMode('explore');
+      }
+      return res;
+    },
+  };
+  const earsRef = useRef<ReturnType<typeof createEars> | null>(null);
+  const brainRef = useRef<ReturnType<typeof createAcuity> | null>(null);
+
+  const ensureAcuity = () => {
+    if (brainRef.current || !tools) return;
+    const call = <T,>(name: string, ...a: unknown[]) => (act.current[name] as (...x: unknown[]) => T)(...a);
+    brainRef.current = createAcuity({
+      view: () => {
+        const L = live.current;
+        const rt = routeNow.current ?? L.route;
+        const remainingM = rt ? Math.max(0, rt.lengthMeters - (L.gstate?.progressMeters ?? 0)) : 0;
+        return {
+          stage: (L.mode === 'explore' || L.mode === 'results' || L.mode === 'place' || L.mode === 'nav' || L.mode === 'ride' || L.mode === 'rail' || L.mode === 'arrived' ? L.mode : 'explore'),
+          results: resultsNow.current, sel: L.sel, route: routeNow.current ?? L.route, remaining: remainingM,
+          nextInstruction: L.mode === 'nav' ? (guidanceRef.current?.nextStep() ?? null) : null,
+          progress: L.gstate?.progressMeters ?? 0, here: sourceRef.current?.current() ?? L.me, online: connectivity.mode() === 'online', travel: L.travel,
+        };
+      },
+      tools,
+      say: (text, o) => speak({ text, priority: o?.queue ? 'queue' : 'interrupt' }),
+      caption: addCaption,
+      typeQuery: (t) => call<Promise<void>>('typeQuery', t),
+      search: (q) => call<Promise<number>>('search', q),
+      choose: (t) => call('choose', t),
+      setProfile: (p) => call('setProfile', p),
+      startWalk: () => call('startWalk'),
+      endWalk: () => call('endWalk'),
+      showTransit: () => call('showTransit'),
+      startJourney: () => call('startJourney'),
+      openTaxi: () => call('openTaxi'),
+      openCamera: (l) => call('openCamera', l),
+      openHelp: () => call('openHelp'),
+      runIntent: (i) => call<Promise<ToolResult>>('runIntent', i),
+      listen: () => void earsRef.current?.listenOnce().catch(() => speak("I can't open the microphone. Allow it for this page, or type instead.")),
+      rest: () => earsRef.current?.rest(),
+    });
+    earsRef.current = createEars({
+      onState: (st) => setEarsState(st),
+      onUtterance: (text, how) => {
+        const brain = brainRef.current;
+        if (!brain) return;
+        if (how === 'open') return brain.handle(afterWakeWord(text) ?? text);
+        const rest = afterWakeWord(text);
+        if (rest === null) return; // not for Acuity
+        stopSpeaking();
+        if (rest) brain.handle(rest);
+        else brain.wake();
+      },
+    });
+  };
+
+  const startAcuity = () => {
+    setWelcome(false);
+    setAcuityOn(true);
+    void requestCompassPermission();
+    ensureAcuity();
+    brainRef.current?.greet(); // asks a question, so it listens for the answer, then stops
+    // Development only: lets tests talk to Acuity's brain directly ("say" a sentence).
+    if (import.meta.env.DEV) (window as unknown as { __acuity?: unknown }).__acuity = brainRef.current;
+  };
+  const talkToAcuity = () => {
+    ensureAcuity();
+    stopSpeaking();
+    brainRef.current?.wake();
+  };
+  // "Hey Acuity" is listened for only during a journey (walking, bus, train). Elsewhere the
+  // mic is on only right after Acuity asks a question; otherwise it is off (tap Talk).
+  const onJourney = mode === 'nav' || mode === 'ride' || mode === 'rail';
+  useEffect(() => {
+    if (!earsRef.current) return;
+    if (!settings.acuity) {
+      earsRef.current.stop();
+      setAcuityOn(false);
+      return;
+    }
+    if (acuityOn) void earsRef.current.armWake(settings.wakeWord && onJourney).catch(() => {});
+  }, [settings.acuity, settings.wakeWord, acuityOn, onJourney]);
+  useEffect(() => () => earsRef.current?.stop(), []);
+  const acuityState: AcuityState = talking ? 'speaking' : earsState;
 
   // The page title says where you are (screen readers announce it; it names the browser tab).
   useEffect(() => {
@@ -834,6 +1020,16 @@ export function App() {
   return (
     <main className={`shell${settings.mapStyle === 'highContrast' ? ' hc' : ''}${talking ? ' talking' : ''}${uiZoom >= 1.3 ? ' big-text' : ''}`} style={{ background: mapBackground(settings.mapStyle), ['--ui-zoom' as string]: uiZoom, ['--rc-zoom' as string]: rcZoom }}>
 
+      {welcome && index && (
+        <Welcome
+          onStart={startAcuity}
+          onSkip={() => {
+            setWelcome(false);
+            announceOnly('Acuity is off. Use the search, or the buttons. You can turn Acuity on in Settings.');
+          }}
+        />
+      )}
+
       <div className="visually-hidden" role="status" aria-live="polite">
         {announce}
       </div>
@@ -842,11 +1038,15 @@ export function App() {
       <div className="left-col" style={{ zoom: uiZoom }}>
         {mode !== 'nav' && mode !== 'ride' && mode !== 'rail' && mode !== 'arrived' ? (
           <div className="top-stack">
-            <SearchBar query={query} onQuery={setQuery} onSubmit={() => void submit()} onClear={clearSearch} busy={busy} listening={listening} onMic={onMic} />
+            {acuityOn && <AcuityBar state={acuityState} captions={captions} onTalk={talkToAcuity} />}
+            <SearchBar query={query} onQuery={setQuery} onSubmit={() => void submit()} onClear={clearSearch} busy={busy} listening={listening} onMic={onMic} typing={typing} />
             <CategoryChips active={mode === 'results' ? chip : null} onPick={pickChip} />
           </div>
         ) : (
-          <div className="top-stack">{banner}</div>
+          <div className="top-stack">
+            {banner}
+            {acuityOn && <AcuityBar state={acuityState} captions={captions} onTalk={talkToAcuity} />}
+          </div>
         )}
 
         <div className="bottom-stack">
@@ -858,7 +1058,7 @@ export function App() {
             <AnswerCard answer={answer} me={me} onClose={() => setAnswer(null)} onSayAgain={() => speak(answer.text)} onChoose={choose} />
           )}
 
-          {mode === 'results' && <ResultsCard title={resultsTitle} results={results} me={me} onClose={clearSearch} onChoose={choose} />}
+          {mode === 'results' && <ResultsCard title={resultsTitle} results={results} me={me} onClose={clearSearch} onChoose={(t) => choose(t)} loading={searching} />}
 
           {mode === 'place' && sel && (
             <PlaceCard
@@ -874,6 +1074,7 @@ export function App() {
                 if (results.length) {
                   setMode('results');
                   setSel(null);
+                  routeNow.current = null;
                   setRoute(null);
                   mapRef.current?.fitPoints([me, ...results.slice(0, 5).map((r) => r.target)]);
                 } else finish();

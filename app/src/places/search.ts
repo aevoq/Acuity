@@ -19,6 +19,7 @@ const KIND_WORDS: Array<{ re: RegExp; categories?: PlaceCategory[]; tag?: RegExp
   { re: /\b(cash ?machine|cashpoint|atm|bank)\b/, categories: ['atm'] },
   { re: /\b(station|train|tube|overground|dlr)\b/, categories: ['station'] },
   { re: /\b(hospital|doctor|gp|clinic|surgery)\b/, categories: ['hospital'] },
+  { re: /\b(park|parks|garden|gardens|green space|playground|somewhere green)\b/, categories: ['park'] },
   { re: /\b(post office)\b/, tag: /post_office/ },
   { re: /\b(library)\b/, tag: /library/ },
 ];

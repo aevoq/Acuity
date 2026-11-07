@@ -13,8 +13,8 @@
 // Directions: clock positions when we know which way the person faces
 // (heading), compass words when we don't. Never a guess dressed as fact.
 
-import type { IntentName, LatLng, Place, Position, ToolResult } from '../contracts';
-import { bearing, clockPosition } from '../geo/geo';
+import type { IntentName, LatLng, Place, Position, Route, ToolResult } from '../contracts';
+import { bearing, clockPosition, distance } from '../geo/geo';
 import type { Router } from '../nav/router';
 import type { PackIndex } from '../pack/pack';
 import { compassWord } from '../nav/instructions';
@@ -104,6 +104,49 @@ export function createTools({ index, router }: ToolDeps) {
       const where = !street ? 'You are not near a named street.' : street.meters <= 25 ? `You are on ${street.name}.` : `You are near ${street.name}.`;
       const near = landmark ? ` Nearest place: ${landmark.place.name}, ${metresWords(landmark.meters)} ${directionWords(here, landmark.place)}.` : '';
       return ok('whereAmI', `${where}${near}${accuracyCaveat(here)}`, { street: street?.name ?? null, landmark: landmark?.place ?? null });
+    },
+
+    /**
+     * "Where's the nearest bench?" On a walk, a bench on the route ahead first
+     * ("on your route in about 120 metres"), else the nearest anywhere.
+     */
+    nearestBench({ route, progress }: { route?: Route | null; progress?: number } = {}, here: Position): ToolResult {
+      const benches = index.pack.benches;
+      if (!benches.length) return fail('nearest', 'There are no benches in the downloaded map.');
+      if (route && route.path.length > 1) {
+        // Distance along the route of each path vertex, to place benches on it.
+        const cum = [0];
+        for (let i = 1; i < route.path.length; i++) cum.push(cum[i - 1] + distance(route.path[i - 1], route.path[i]));
+        const done = progress ?? 0;
+        let best: { along: number } | null = null;
+        for (const b of benches) {
+          if (distance(here, b) > 900) continue;
+          let bi = 0;
+          let bd = Infinity;
+          for (let i = 0; i < route.path.length; i++) {
+            const d = distance(b, route.path[i]);
+            if (d < bd) [bi, bd] = [i, d];
+          }
+          if (bd <= 20 && cum[bi] > done + 5 && (!best || cum[bi] < best.along)) best = { along: cum[bi] };
+        }
+        if (best) return ok('nearest', `There's a bench on your route in about ${metresWords(best.along - done)}.`, best);
+      }
+      let near: LatLng | null = null;
+      let nd = Infinity;
+      for (const b of benches) {
+        const d = distance(here, b);
+        if (d < nd) [near, nd] = [b, d];
+      }
+      if (!near || nd > 1500) return fail('nearest', 'There is no bench within 1.5 kilometres in the downloaded map.');
+      return ok('nearest', `The nearest bench is about ${metresWords(nd)} ${directionWords(here, near)}${route ? ', not on your route' : ''}.${accuracyCaveat(here)}`, { bench: near, meters: nd });
+    },
+
+    /** "How far is it? When will I arrive? What's next?" From the live route. */
+    routeStatus({ route, remaining, next }: { route: Route | null; remaining: number; next: string | null }): ToolResult {
+      if (!route) return fail('nextStep', "You're not on a route yet. Tell me where you'd like to go.");
+      const mins = Math.max(1, Math.round(remaining / 1.4 / 60));
+      const at = new Date(Date.now() + (remaining / 1.4) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      return ok('nextStep', `${metresWords(remaining)} to ${route.destinationName}, about ${mins} minute${mins === 1 ? '' : 's'}: you should arrive around ${at}.${next ? ` Next: ${next}` : ''}`);
     },
 
     /** "Where's the nearest bus stop?" With its letter, direction and buses. */

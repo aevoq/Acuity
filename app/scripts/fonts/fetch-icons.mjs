@@ -23,7 +23,7 @@ export const ICONS = [
   'turn_sharp_right', 'turn_slight_left', 'turn_slight_right', 'u_turn_left', 'warning', 'wc', 'wrong_location',
   'subway', 'tram', 'commute', 'local_taxi', 'content_copy', 'open_in_new', 'arrow_forward', 'check',
   'photo_camera', 'mic', 'videocam_off', 'visibility', 'question_answer',
-  'volume_off', 'mic_off', 'graphic_eq', 'keyboard',
+  'volume_off', 'mic_off', 'graphic_eq', 'keyboard', 'park', 'forum', 'hearing',
 ];
 
 const OUT = resolve(dirname(fileURLToPath(import.meta.url)), '../../src/assets/fonts/material-symbols-rounded-subset.woff2');

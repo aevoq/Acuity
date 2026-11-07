@@ -21,7 +21,9 @@ Endpoints (JSON in, JSON out):
   POST /vision/detect          {image: base64 jpeg} -> {lights: [{colour, confidence, box}], objects: [...], ms}
   POST /assistant/ask          {question? | audio: base64, image?: base64 jpeg, speak?: bool}
                                -> {question, answer, usedCamera, audio?: base64 wav}
-  POST /speech/transcribe      {audio: base64} -> {text}   Whisper only (the app's mic button)
+  POST /speech/transcribe      {audio: base64, hint?: str} -> {text}   Whisper only (mic, "Hey Acuity")
+  POST /agent/intent           {utterance} -> {intent, query?, side?}   gemma3 picks one of the app's tools
+                               (Acuity, offline); the app's data writes the answer (ADR-004)
   POST /voice/speak            {text} -> {audio: base64 wav}   Abdullah's Piper voice, for every
                                prompt in the app (cached by text)
 """
@@ -202,6 +204,70 @@ def decode_to_mono(path, rate):
     return np.concatenate(chunks).astype(np.float32) / 32768.0
 
 
+def transcribe_hinted(audio_bytes, hint):
+    """Whisper with a custom hint, e.g. "Hey Acuity", so the wake word is spelled right."""
+    va = state["assistant"]
+    with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
+        f.write(audio_bytes)
+        path = f.name
+    try:
+        audio = decode_to_mono(path, va.SAMPLE_RATE)
+    finally:
+        os.remove(path)
+    if audio.size == 0 or float(abs(audio).max()) < 1e-4:
+        return ""
+    audio = audio / float(abs(audio).max()) * 0.9
+    segments, _ = state["whisper"].transcribe(
+        audio, language="en", beam_size=va.WHISPER_BEAM, temperature=0.0,
+        condition_on_previous_text=False, without_timestamps=True, initial_prompt=hint,
+    )
+    parts = [s.text.strip() for s in segments if not (s.no_speech_prob > 0.6 and s.avg_logprob < -1.0)]
+    return " ".join(parts).strip()
+
+
+INTENTS = {
+    "nearest": "find the nearest place of a kind or name (needs query: e.g. tesco, pharmacy, toilet, park, cafe)",
+    "navigateTo": "go to a place (needs query)",
+    "aroundMe": "what is around the person",
+    "leftRight": "what is on one side (needs side: left, right, ahead or behind)",
+    "whereAmI": "which street the person is on",
+    "nearestBench": "the nearest bench or somewhere to sit",
+    "routeStatus": "how far, how long, when they will arrive",
+    "nextStep": "the next walking instruction",
+    "nearestBusStop": "the nearest bus stop",
+    "busArrivals": "when the next buses come",
+    "repeat": "say the last thing again",
+    "help": "emergency or help",
+    "stopNavigation": "stop or cancel the walk",
+    "describeScene": "describe what the camera sees",
+    "unknown": "none of these",
+}
+
+
+def agent_intent(utterance):
+    """Abdullah's gemma3 picks ONE tool and its arguments. It never writes the answer."""
+    import ollama
+    va = state["assistant"]
+    prompt = (
+        "You route a blind or low-vision walker's request to one tool of a navigation app. "
+        "Reply with JSON only: {\"intent\": <one of the names>, \"query\": <place words or null>, \"side\": <left|right|ahead|behind or null>}.\n"
+        + "\n".join(f"- {k}: {v}" for k, v in INTENTS.items())
+    )
+    r = ollama.chat(model=va.VISION_MODEL, format="json", options={"temperature": 0, "num_predict": 60}, keep_alive="30m",
+                    messages=[{"role": "system", "content": prompt}, {"role": "user", "content": utterance}])
+    try:
+        d = json.loads(r["message"]["content"])
+    except Exception:
+        return {"intent": "unknown"}
+    intent = d.get("intent") if d.get("intent") in INTENTS else "unknown"
+    out = {"intent": intent}
+    if isinstance(d.get("query"), str) and d["query"].strip():
+        out["query"] = d["query"].strip()[:80]
+    if d.get("side") in ("left", "right", "ahead", "behind"):
+        out["side"] = d["side"]
+    return out
+
+
 def transcribe(audio_bytes):
     """Browser audio (webm/ogg/wav) -> text, with Abdullah's Whisper settings."""
     va = state["assistant"]
@@ -310,7 +376,18 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, {"text": "where is the nearest tesco"})
                 if state["whisper"] is None:
                     return self._send(503, {"error": state["assistant_error"] or "speech not loaded"})
-                return self._send(200, {"text": transcribe(base64.b64decode(body["audio"]))})
+                audio = base64.b64decode(body["audio"])
+                text = transcribe_hinted(audio, body["hint"]) if body.get("hint") else transcribe(audio)
+                return self._send(200, {"text": text})
+            if self.path.startswith("/agent/intent"):
+                utterance = (body.get("utterance") or "").strip()
+                if not utterance:
+                    return self._send(400, {"error": "utterance required"})
+                if MOCK:
+                    return self._send(200, {"intent": "unknown"})
+                if state["assistant"] is None:
+                    return self._send(503, {"error": state["assistant_error"] or "assistant not loaded"})
+                return self._send(200, agent_intent(utterance))
             if self.path.startswith("/voice/speak"):
                 text = (body.get("text") or "").strip()
                 if not text:
