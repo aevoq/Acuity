@@ -58,7 +58,7 @@ VISION_MODEL_CHOICES = [
 SPECULATIVE_ANSWERS = True   # starts working out the answer during the pause at the end of your
                              # question, so it is often ready the moment you finish
 # The same settings must be used for every request, otherwise Ollama reloads the model (slow)
-MODEL_OPTIONS = {"num_ctx": 4096, "num_predict": 150, "temperature": 0.1, "top_p": 0.9}
+MODEL_OPTIONS = {"num_ctx": 4096, "num_predict": 200, "temperature": 0.1, "top_p": 0.9}
 VOICE = "en_GB-southern_english_female-low"   # your downloaded Piper voice
 SENTENCE_GAP = 0.1        # pause between sentences, in seconds (Piper's own long silences are trimmed)
 
@@ -106,6 +106,7 @@ MIRROR_CAMERA = False     # set to True if left and right come out the wrong way
 DARK_FRAME_LEVEL = 25     # average brightness (0-255) below which the picture counts as too dark
 BLUR_RATIO = 0.4          # a frame less than this share as sharp as the camera has recently been
                           # counts as blurry (a moving hand), so it waits a moment for a steadier one
+PEOPLE_DETECTOR = True    # uses OpenCV's built-in face and person detectors so people are never missed
 ZOOM_FOR_READING = True   # when you ask it to read something, also sends a zoomed-in view of the centre
 DETAIL_FOR_FINDING = True # when you ask where something is, also sends the left and right halves in
                           # more detail. More accurate positions, but adds a little thinking time
@@ -153,26 +154,33 @@ HELP_TEXT = (
 
 # ---- How the guide behaves ----
 GUIDE_ROLE = (
-    "You are a professional navigation guide for a blind or low-vision person who may be "
-    "outside, walking, or using public transport. Speak like a calm, experienced guide: clear, "
-    "concise, respectful and to the point, with no jokes, no filler and no exclamation marks. "
-    "Answer in one or two short spoken sentences, or up to four when describing their "
-    "surroundings, in plain words, with no lists, no asterisks "
-    "and no formatting. "
+    "You are a professional guide for a blind or low-vision person, who may be indoors or "
+    "outside. Speak like a calm, experienced guide: clear, concise, respectful and to the point, "
+    "with no jokes, no filler and no exclamation marks. Answer in one or two short spoken "
+    "sentences. When there is a camera picture, use up to three sentences, or up to five when "
+    "describing their surroundings, in plain words, with no lists, no asterisks and no formatting. "
 )
 
 HONESTY_RULES = (
-    "Their safety depends on what you tell them, so honesty matters more than sounding helpful. "
-    "Only state what you can actually see or know. If you are not sure about what they asked, say "
-    "plainly that you are not sure. Never guess about distances, traffic, kerbs, steps, platform "
-    "edges, crossing signals, or bus and train numbers. Never tell them something is safe. If they "
-    "ask whether it is safe to cross, step forward or board, say you cannot confirm that and that "
-    "they should rely on their cane, guide dog, the crossing signal, or a person nearby. "
-    "Always describe anything that is in or near their way, even if you are unsure what it is: "
-    "say what it might be and where it is. A missed obstacle is much worse than an extra mention. "
-    "Put anything in their way first. Never say the way is clear or that nothing is there unless "
-    "you can see the ground ahead and have checked it. Do not add general warnings with no "
-    "specific reason, such as be careful, stay alert or stay safe. "
+    "Their safety depends on what you tell them, so being right matters more than saying a lot. "
+    "Only mention something if you can clearly see it in the latest picture. Do not mention "
+    "anything you are not sure is there, and never add things that are usually found in places "
+    "like this but are not visible. If you can see something but are not sure what it is, do not "
+    "guess its name: describe it by its shape, size, colour and position instead, for example a "
+    "tall dark object about two metres to your left. Never guess what kind of place they are in; "
+    "only name a place if a sign or something unmistakable in the picture shows it. Never guess "
+    "distances, numbers or words you cannot read clearly; say you are not sure instead. "
+    "People are an exception: if you can see a person, or part of one such as a face, head, arm "
+    "or body, always mention them, even if they are close to the camera or partly hidden. That is "
+    "not guessing. "
+    "Never tell them something is safe. If they ask whether it is safe to cross or step forward, "
+    "say you cannot confirm that and that they should rely on their cane, guide dog, a signal, or "
+    "a person nearby. "
+    "Always mention anything you can see in or near their way, even if you cannot tell what it "
+    "is. A missed obstacle is much worse than an extra mention. Put anything in their way first. "
+    "Never say the way is clear or that nothing is there unless you can see the ground ahead and "
+    "have checked it. Do not add general warnings with no specific reason, such as be careful, "
+    "stay alert or stay safe. "
 )
 
 FOLLOW_UP_RULE = (
@@ -184,26 +192,26 @@ FOLLOW_UP_RULE = (
 # work it did on it last time, which makes every answer start faster.
 SYSTEM_PROMPT = (
     GUIDE_ROLE
-    + "Your main job is helping them get around safely: directions, routes, public transport, "
-    "crossings, stations and their surroundings. If they ask about something unrelated to getting "
-    "around, answer it briefly and politely. "
+    + "Your main job is helping them get around safely and understand what is around them. If "
+    "they ask about something else, answer it briefly and politely. "
     "When their message has a camera picture attached, it shows what is in front of them right "
     "now, taken from where they are standing and facing. The left of the picture is their left and "
-    "the right of the picture is their right. Answer about what the picture actually shows. "
+    "the right of the picture is their right. Answer only about what the picture actually shows. "
     "Use clear directions such as left, right and straight ahead, with approximate "
-    "distances in steps or metres, and say when a distance is only an estimate. When reading signs "
-    "or text, read the words exactly as written, and if only part is readable, say which part you "
+    "distances in steps or metres, and say when a distance is only an estimate. When reading "
+    "text, read the words exactly as written, and if only part is readable, say which part you "
     "could not read. Do not repeat what you have already told them unless asked. If the picture is "
     "blurry, too dark, or does not show what they asked about, say so and tell them how to move the "
     "camera, for example tilt it down or turn slightly left. "
     "Earlier answers in this conversation were about earlier pictures and the scene may have "
     "changed, so describe only what is in the picture attached to the latest message. "
-    "Whenever there is a picture, always refer to the important things in it for someone who "
-    "cannot see: anything in their way or that they could trip on or walk into, people close to "
-    "them, moving vehicles, and useful landmarks such as doors, exits, stairs, lifts, crossings "
-    "and signs. Name each one with where it is and roughly how far away. Answer their question "
-    "first, then briefly add any important thing they did not ask about. Leave out unimportant "
-    "details such as decorations or wall colours. "
+    "Whenever there is a picture, refer to the important things you can clearly see in it: "
+    "anything in their way, every person you can see, vehicles, and landmarks such as doors or "
+    "stairs. Name each one with where it is and roughly how far away. Answer their question "
+    "first, then briefly add any important thing they did not ask about. Only mention things that "
+    "matter for getting around or that they asked about. Leave out background things such as "
+    "pipes, vents, wires on walls or ceilings, lights, shelves, posters, plants, decorations and "
+    "wall colours, unless they are in their way or they ask. "
     "When there is no picture attached and answering properly would require seeing their "
     "surroundings, reply with exactly the single word NEED_CAMERA and nothing else. Never pretend "
     "to see anything. "
@@ -261,23 +269,27 @@ DESCRIBE_PHRASES = ("in front of me", "what can you see", "what do you see", "wh
                     "what is ahead", "look around", "what's there", "what is there", "what's here",
                     "what is here", "where am i", "what's going on", "what is going on")
 DESCRIBE_CHECK = (
-    "Explain only the important things around them, most important first, as a guide would to "
+    "Explain the important things you can clearly see, most important first, as a guide would to "
     "someone who cannot see the scene. In this order: one, anything in their way or that they "
     "could trip on or walk into; two, people near them, where they are, what they are doing and "
     "whether they are facing them, never leaving out a person who is close or only partly in the "
-    "picture; three, useful landmarks for finding their way, such as doors, exits, stairs, lifts, "
-    "signs with writing, crossings, seats, counters and platforms; four, in a few words, what kind "
-    "of place this seems to be. For each thing, say where it is, roughly how far away, and in a "
-    "few words why it matters, for example a door about three metres ahead that looks like the way "
-    "out. Leave out unimportant details such as decorations, wall colours and small objects, "
-    "unless they ask. Describe people only by what is visible; do not try to say who someone is "
-    "or guess personal traits such as ethnicity."
+    "picture; three, things that help them find their way, such as doors, stairs or written signs. "
+    "For each thing, say where it is, roughly how far away, and in a few words why it matters. "
+    "Add one useful detail you can clearly see, such as its size, colour, whether a door is open "
+    "or closed, which way stairs go, what a sign says, or what a person is wearing. Only include "
+    "things that are definitely in this picture; if you are unsure about something, leave it out "
+    "or describe its shape and position without naming it. People are the exception: mention "
+    "every person you can see, even partly. Do not say what kind of place this is unless they ask. "
+    "Leave out background things such as pipes, vents, wires, lights, shelves, posters, plants, "
+    "decorations, wall colours and small objects, unless they are in their way. Describe people only by what is visible; do not try to say who someone is or guess "
+    "personal traits such as ethnicity."
 )
 # Every other camera question gets this reminder, so important things are never skipped.
 GENERAL_CHECK = (
-    "Answer their question about the picture. Then, in a few words, mention anything important "
-    "for getting around that is visible: something in their way, a person close by, a vehicle, "
-    "or a door, stairs or a sign, each with where it is."
+    "Answer their question about the picture, with one useful detail that helps them picture it, "
+    "such as its size, colour or whether it is open or closed. Then, in a sentence, mention "
+    "anything important for getting around that is visible: something in their way, a person "
+    "close by, a vehicle, or a door, stairs or a sign, each with where it is."
 )
 # Questions about people get a check focused on them.
 PEOPLE_WORDS = {"who", "person", "people", "someone", "anyone", "anybody", "somebody", "man",
@@ -589,6 +601,79 @@ def enhance(frame):
     return cv2.cvtColor(cv2.merge((l, a, b)), cv2.COLOR_LAB2BGR)
 
 
+_detectors = None
+
+
+def people_detectors():
+    """Loads OpenCV's face and person detectors once. Anything missing is simply skipped."""
+    global _detectors
+    if _detectors is None:
+        _detectors = {}
+        try:
+            path = os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")
+            face = cv2.CascadeClassifier(path)
+            if not face.empty():
+                _detectors["face"] = face
+        except Exception:
+            pass
+        try:
+            hog = cv2.HOGDescriptor()
+            hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+            _detectors["body"] = hog
+        except Exception:
+            pass
+        if DEBUG_LEVELS:
+            print(f"(people detectors available: {', '.join(_detectors) or 'none'})")
+    return _detectors
+
+
+def side_of(x_centre):
+    return "on your left" if x_centre < 0.35 else "on your right" if x_centre > 0.65 else "ahead of you"
+
+
+def find_people(frame):
+    """
+    Returns a list of people found, each {"side": "on your left" / "ahead of you" / ..., "close": bool}.
+    Faces catch people close by; the body detector catches whole people standing further away.
+    """
+    if not PEOPLE_DETECTOR:
+        return []
+    found = []
+    try:
+        small = cv2.resize(frame, (640, int(640 * frame.shape[0] / frame.shape[1])))
+        h, w = small.shape[:2]
+        det = people_detectors()
+        boxes = []
+        if "face" in det:
+            gray = cv2.equalizeHist(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY))
+            for (x, y, fw, fh) in det["face"].detectMultiScale(gray, 1.1, 6, minSize=(28, 28)):
+                boxes.append((x, y, fw, fh, fw / w > 0.12))
+        if "body" in det:
+            rects, weights = det["body"].detectMultiScale(small, winStride=(8, 8), padding=(8, 8), scale=1.05)
+            for (x, y, bw, bh), wt in zip(rects, np.ravel(weights) if len(rects) else []):
+                if float(wt) < 0.6:
+                    continue
+                # skip a body whose face was already found
+                if any(fx >= x and fx + fw2 <= x + bw and fy >= y and fy <= y + bh
+                       for fx, fy, fw2, _, _ in boxes):
+                    continue
+                boxes.append((x, y, bw, bh, bh / h > 0.75))
+        for (x, y, bw, bh, close) in boxes:
+            found.append({"side": side_of((x + bw / 2) / w), "close": bool(close)})
+    except Exception as e:
+        if DEBUG_LEVELS:
+            print("(people detector problem:", e, ")")
+    return found
+
+
+def people_note(people):
+    if not people:
+        return ""
+    parts = [f"one {'close to the camera' if p['close'] else 'further away'} {p['side']}" for p in people]
+    return ("A person detector suggests there may be people here: " + "; ".join(parts) +
+            ". Look for them in the picture and describe each person you can actually see.")
+
+
 def to_jpeg(frame, size=896):
     """Shrinks the picture to the size the model looks at and turns it into JPEG bytes."""
     h, w = frame.shape[:2]
@@ -622,12 +707,12 @@ def grab_frame(question):
     for a steadier one. Adds a zoomed-in view when you've asked to read something.
     """
     if not camera or not camera.running:
-        return None, 0, ""
+        return None, 0, "", []
     frame, score = question_frame["frame"], question_frame["score"]
     if frame is None or time.time() - question_frame["time"] > 5 or camera.is_blurry(score):
         frame, score = camera.steady_frame()
     if frame is None:
-        return None, 0, ""
+        return None, 0, "", []
 
     brightness = float(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).mean())
     frame = enhance(frame)
@@ -648,6 +733,9 @@ def grab_frame(question):
         images.append(to_jpeg(frame[:, int(w * 0.45):]))
         notes.append("The second and third pictures are the left half and the right half of the first, "
                      "in more detail. Use them to judge exactly where things are.")
+    people = find_people(frame)
+    if people:
+        notes.append(people_note(people))
     if words & PATH_WORDS:
         notes.append(PATH_CHECK)
     elif is_describe_question(question):
@@ -662,7 +750,7 @@ def grab_frame(question):
                 f.write(images[0])
         except OSError:
             pass
-    return [i for i in images if i], brightness, " ".join(notes)
+    return [i for i in images if i], brightness, " ".join(notes), people
 
 
 # =========================== Voice output (Piper) ===========================
@@ -1508,6 +1596,64 @@ def is_needless_warning(sentence, question):
     return bool(GENERIC_WARNINGS.search(s)) and words <= GENERIC_ONLY
 
 
+# Kinds of place a small model likes to guess. A sentence that says "you're in a ..." or "this
+# looks like a ..." one of these is removed, unless they asked where they are.
+PLACE_NAMES = (
+    r"(train |railway |tube |underground |subway |metro |bus |coach )?(station|terminal)|platform|"
+    r"airport|hospital|clinic|shopping (centre|center|mall)|mall|supermarket|shop|store|office|"
+    r"restaurant|cafe|café|canteen|school|classroom|university|library|museum|hotel|lobby|"
+    r"car park|parking (lot|garage)|park|street|road|warehouse|factory|gym|church|kitchen|"
+    r"bedroom|bathroom|living room|dining room|garage|garden|corridor|hallway|waiting (room|area)"
+)
+PLACE_GUESS = re.compile(
+    r"\b(you('re| are| seem| appear)?|we|this|it|the (area|place|scene|setting|room|space|location))\b"
+    r"[^.]{0,40}\b(is|are|be|seems?|appears?|looks?|could|might|may|probably|likely|'re|'s)\b"
+    r"[^.]{0,25}\b(in|at|inside|like|of)?\s*(a|an|the|some (kind|sort|type) of)\s+"
+    r"([a-z]+ ){0,2}(" + PLACE_NAMES + r")\b"
+    r"|\b(looks?|seems?|appears?) (to be )?(like )?(a|an|the) ([a-z]+ ){0,2}(" + PLACE_NAMES + r")\b")
+POSITION_WORDS = re.compile(r"\b(metres?|meters?|feet|foot|steps? (ahead|away|in front)|to your (left|right)|"
+                            r"on your (left|right)|ahead of you|in front of you|behind you|beside you)\b")
+WHERE_AM_I = ("where am i", "what place", "what kind of place", "what sort of place", "what is this place",
+              "what's this place", "where are we", "what building", "what room")
+
+
+PERSON_WORDS = re.compile(
+    r"\b(person|people|man|men|woman|women|someone|somebody|child|children|kid|kids|boy|girl|guy|"
+    r"lady|gentleman|he|she|they|face|figure|crowd|individual|pedestrian|passenger|staff)\b")
+BACKGROUND_WORDS = {
+    "pipe", "pipes", "pipework", "vent", "vents", "ceiling", "duct", "ducts", "ductwork", "poster",
+    "posters", "painting", "paintings", "frame", "frames", "decoration", "decorations",
+    "wallpaper", "shelf", "shelves", "shelving", "light", "lights", "lamp", "lamps", "fixture",
+    "fixtures", "socket", "sockets", "outlet", "outlets", "switch", "switches", "plant", "plants",
+    "curtain", "curtains", "blinds", "tiles", "pattern", "texture", "wire", "wires", "wiring",
+    "conduit", "beam", "beams", "panel", "panels", "artwork",
+}
+IN_THE_WAY = re.compile(
+    r"\b(in your way|in front of you|ahead|on the floor|on the ground|floor|ground|underfoot|"
+    r"head height|hanging|low|blocking|path|walk into|trip|step|stairs|door|exit|sign says)\b")
+
+
+def is_background_detail(sentence, question):
+    """True for a sentence only about background things (pipes, vents, posters...) that aren't
+    in their way, unless they asked about them or it also mentions a person."""
+    n = normalise(sentence)
+    words = set(re.findall(r"[a-z']+", n))
+    background = words & BACKGROUND_WORDS
+    if not background or background & set(re.findall(r"[a-z']+", normalise(question))):
+        return False
+    return not IN_THE_WAY.search(n) and not PERSON_WORDS.search(n)
+
+
+def is_place_guess(sentence, question):
+    """True for a guess about what kind of place it is, when they didn't ask."""
+    if any(p in normalise(question) for p in WHERE_AM_I):
+        return False
+    n = normalise(sentence)
+    if POSITION_WORDS.search(n):
+        return False          # it also says where something is, which may matter more than the guess
+    return bool(PLACE_GUESS.search(n))
+
+
 def is_describe_question(question):
     n = normalise(question)
     return bool(set(re.findall(r"[a-z']+", n)) & DESCRIBE_WORDS) or any(p in n for p in DESCRIBE_PHRASES)
@@ -1538,6 +1684,7 @@ def produce(question, out_q, stop, info):
     sentence into audio, and puts (text, wav) on the queue so speaking can start straight away.
     """
     spoken = []
+    people = []             # people the detector found in the picture
     ok = True
 
     def emit(sentence):
@@ -1574,7 +1721,7 @@ def produce(question, out_q, stop, info):
 
         if use_camera:
             info["camera"] = True
-            images, brightness, note = grab_frame(question)
+            images, brightness, note, people = grab_frame(question)
             softened = False
             if not images:
                 ok = False
@@ -1589,6 +1736,12 @@ def produce(question, out_q, stop, info):
                     if is_needless_warning(s, question):
                         print("(left out a needless warning:", s, ")")
                         continue
+                    if is_place_guess(s, question):
+                        print("(left out a guess about the place:", s, ")")
+                        continue
+                    if is_background_detail(s, question):
+                        print("(left out an unimportant detail:", s, ")")
+                        continue
                     if CLEAR_CLAIM.search(normalise(s)) and not re.search(
                             r"\b(except|but|apart|although|however|other than|besides|only)\b", normalise(s)):
                         # The camera can miss things: never state "it's clear" as a fact
@@ -1597,6 +1750,13 @@ def produce(question, out_q, stop, info):
                             softened = True
                         continue
                     emit(s)
+
+        if info.get("camera") and not stop.is_set() and ok:
+            said = normalise(" ".join(spoken))
+            close = [p for p in people if p["close"]]
+            if close and not PERSON_WORDS.search(said):
+                # The detector is confident someone is right there, but the model left them out
+                emit(f"There is a person close to the camera {close[0]['side']}.")
 
         if not spoken and not stop.is_set():
             # Everything the model said was a needless warning, so say something useful instead
