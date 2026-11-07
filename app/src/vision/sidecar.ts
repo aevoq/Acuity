@@ -71,6 +71,9 @@ export const detectLights = (imageB64: string) => call<Detection>('/vision/detec
 export const askAssistant = (q: { question?: string; audio?: string; image?: string | null; speak?: boolean }) =>
   call<AskResult>('/assistant/ask', q, 60000);
 
+/** Abdullah's Whisper settings, speech to text only (the main mic button). */
+export const transcribeSpeech = (audio: string) => call<{ text: string }>('/speech/transcribe', { audio }, 30000);
+
 /** Abdullah's Piper voice for any text (base64 WAV), or null when it isn't available. */
 export async function piperWav(text: string): Promise<string | null> {
   try {

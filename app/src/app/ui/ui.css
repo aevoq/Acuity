@@ -12,6 +12,11 @@
 .shell .map {
   position: absolute;
   inset: 0;
+  z-index: 0;
+}
+.shell .left-col,
+.shell .right-col {
+  z-index: 2;
 }
 /* MapLibre's canvas takes keyboard focus (arrows pan, +/- zoom). */
 .shell .maplibregl-canvas:focus-visible {
@@ -980,7 +985,7 @@ dialog.sheet.help {
   .bottom-stack .card,
   .bottom-stack .card.scroll,
   .bottom-stack .card.tall {
-    max-height: max(180px, calc((100dvh - 44px) / var(--ui-zoom, 1) - 442px));
+    max-height: max(140px, calc((100dvh - 56px - var(--rc-h, 442px) * var(--rc-zoom, 1)) / var(--ui-zoom, 1)));
   }
 }
 
@@ -1007,7 +1012,7 @@ dialog.sheet.help {
     font-size: 28px;
   }
   .top-stack {
-    width: calc((100vw - 44px) / var(--ui-zoom, 1) - 56px);
+    width: calc((100vw - 44px - 56px * var(--rc-zoom, 1)) / var(--ui-zoom, 1));
   }
 }
 
@@ -1139,3 +1144,237 @@ dialog.sheet.camera {
   gap: 4px;
 }
 .cam-answer p { margin: 0; }
+
+.learn-sounds summary {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  font-size: 18px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.learn-sounds .row-btn .icon {
+  color: #0050c8;
+}
+
+.net-pill.stop-talking {
+  color: #ffffff;
+  background: #111111;
+  border-color: #111111;
+}
+/* Narrow screens: while talking, Stop talking takes the online pill's place,
+   so the column never grows over the cards (SOS stays reachable). */
+@media (max-width: 879px) {
+  .shell.talking .net-pill:not(.stop-talking) {
+    display: none;
+  }
+}
+
+.round-btn.mic {
+  background: transparent;
+  color: #0050c8;
+}
+.round-btn.mic .icon {
+  font-size: 28px;
+}
+.round-btn.mic.on {
+  background: #c62828;
+  color: #ffffff;
+}
+/* Narrow screens with large text: the field needs the room more than the clear button. */
+@media (max-width: 879px) {
+  .shell.big-text .round-btn.clear {
+    display: none;
+  }
+  .searchbar .round-btn.mic {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+/* ---------------------------------------------------------------- high contrast (cards too, not just the map)
+   White and yellow on black, thicker borders; the focus ring turns cyan so it
+   still shows on yellow buttons. */
+.shell.hc {
+  --hc-fg: #ffffff;
+  --hc-accent: #ffd400;
+  --hc-dim: #e6e6e6;
+}
+.shell.hc :focus-visible {
+  outline-color: #00e5ff;
+}
+.shell.hc .card,
+.shell.hc dialog.sheet,
+.shell.hc .searchbar,
+.shell.hc .zoom-box,
+.shell.hc .square-btn,
+.shell.hc .zoom-box button {
+  background: #000000;
+  color: var(--hc-fg);
+  border: 3px solid var(--hc-accent);
+  box-shadow: none;
+}
+.shell.hc dialog.sheet.help {
+  border-color: #ff5252;
+}
+.shell.hc .zoom-box button {
+  border: none;
+}
+.shell.hc .zoom-box button + button {
+  border-top: 2px solid var(--hc-accent);
+}
+.shell.hc .searchbar input {
+  color: var(--hc-fg);
+}
+.shell.hc .searchbar input::placeholder {
+  color: #cfcfcf;
+}
+.shell.hc .search-lead .icon,
+.shell.hc .round-btn.clear,
+.shell.hc .round-btn.mic {
+  color: var(--hc-accent);
+}
+.shell.hc .round-btn {
+  background: #000000;
+  color: var(--hc-fg);
+  border: 2px solid var(--hc-fg);
+}
+.shell.hc .search-go,
+.shell.hc .btn.primary,
+.shell.hc .help-call {
+  background: var(--hc-accent);
+  color: #000000;
+  border: 2px solid var(--hc-accent);
+}
+.shell.hc .btn.primary:disabled {
+  background: #6b5f00;
+  color: #000000;
+}
+.shell.hc .btn.outline,
+.shell.hc .help-sms,
+.shell.hc .sheet-close {
+  background: #000000;
+  color: var(--hc-accent);
+  border: 3px solid var(--hc-accent);
+}
+.shell.hc .btn.danger {
+  background: #ff5252;
+  color: #000000;
+}
+.shell.hc .chip,
+.shell.hc .choice,
+.shell.hc .ask-btn,
+.shell.hc .tile,
+.shell.hc .demo-btn,
+.shell.hc .result,
+.shell.hc .field select {
+  background: #000000;
+  color: var(--hc-fg);
+  border: 2px solid var(--hc-fg);
+  box-shadow: none;
+}
+.shell.hc .chip[aria-pressed='true'],
+.shell.hc .choice:has(input:checked),
+.shell.hc .demo-btn[aria-pressed='true'] {
+  background: var(--hc-accent);
+  color: #000000;
+  border-color: var(--hc-accent);
+}
+.shell.hc .ask-btn .icon,
+.shell.hc .tile .icon,
+.shell.hc .card-head > .icon,
+.shell.hc .step-icon,
+.shell.hc .learn-sounds .row-btn .icon {
+  color: var(--hc-accent);
+}
+.shell.hc .step-icon {
+  background: #000000;
+  border: 2px solid var(--hc-accent);
+}
+.shell.hc .row-btn {
+  color: var(--hc-fg);
+}
+.shell.hc .row-btn:hover,
+.shell.hc .ask-btn:hover,
+.shell.hc .row-btn.journey.chosen {
+  background: #1f1f1f;
+}
+.shell.hc .muted,
+.shell.hc .eyebrow,
+.shell.hc .small,
+.shell.hc .fine,
+.shell.hc .row-meta,
+.shell.hc .row-end span,
+.shell.hc .step-at,
+.shell.hc .choice-set legend,
+.shell.hc .field,
+.shell.hc .nav-meta,
+.shell.hc .switch-row small,
+.shell.hc .demo-row,
+.shell.hc .card h2 {
+  color: var(--hc-dim) !important;
+}
+.shell.hc .route-min,
+.shell.hc .nav-min,
+.shell.hc .warn-text {
+  color: var(--hc-accent);
+}
+.shell.hc .rows > li,
+.shell.hc .rows.ruled,
+.shell.hc .cam-answer,
+.shell.hc .steps-list > li {
+  border-color: #777777;
+}
+.shell.hc .grabber {
+  background: var(--hc-accent);
+}
+.shell.hc .banner,
+.shell.hc .then-chip {
+  border: 3px solid #ffffff;
+}
+.shell.hc .net-pill {
+  background: #000000;
+  border-width: 3px;
+}
+.shell.hc .net-pill.online { color: #7dff8a; }
+.shell.hc .net-pill.offline { color: var(--hc-accent); }
+.shell.hc .leg-chip.walk {
+  background: #000000;
+  color: #ffffff;
+  border: 1px solid #ffffff;
+}
+.shell.hc .leg-chip.ride {
+  background: var(--hc-accent);
+  color: #000000;
+}
+.shell.hc .badge.num {
+  background: var(--hc-accent);
+  color: #000000;
+}
+.shell.hc .maplibregl-ctrl-attrib {
+  background: #000000;
+  color: #ffffff;
+}
+.shell.hc .maplibregl-ctrl-attrib a {
+  color: #ffffff;
+}
+
+/* Narrow screens with large text: the keyboard's Search key submits, so the
+   separate Search button gives its room to the field (the mic stays). */
+@media (max-width: 879px) {
+  .shell.big-text .searchbar .search-go {
+    display: none;
+  }
+}
+
+/* Short phones (an iPhone SE is 667 px tall): six stacked buttons and a usable
+   card don't both fit, so the zoom buttons go (pinch and the +/- keys still
+   zoom); SOS, camera, settings, re-centre and online stay. */
+@media (max-width: 879px) and (max-height: 760px) {
+  .shell {
+    --rc-h: 320px;
+  }
+  .right-col .zoom-box {
+    display: none;
+  }
+}

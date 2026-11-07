@@ -27,6 +27,7 @@ import { findPlaces } from '../places/search';
 import { createTools } from '../places/tools';
 import { geocodeLondon } from '../places/geocode';
 import { createGpsSource, gpsAvailable } from '../position/gps';
+import { requestCompassPermission, startCompass } from '../position/compass';
 import { createSimWalk, type SimWalk } from '../sim/simWalk';
 import { busArrivals, routesAt } from '../transit/arrivals';
 import { createBusRide, planBusRide, type BusRidePlan, type BusRideState } from '../transit/busRide';
@@ -37,7 +38,9 @@ import { DEFAULT_PROFILE } from './defaultProfile';
 import { quickMatch } from './quickMatch';
 import { runIntent } from './runIntent';
 import { useSettings } from './settings';
-import { say } from './speaker';
+import { onSpeakingChange, say, stopSpeaking } from './speaker';
+import { createListener, type Listener } from './listen';
+import { playEarcon, SOUND_NAMES } from './earcons';
 import { CameraSheet } from './ui/CameraSheet';
 import { AnswerCard, ArrivedCard, ExploreCard, PlaceCard, ResultsCard, type BusSetup } from './ui/Cards';
 import { CategoryChips, RightControls, SearchBar, type CATEGORIES } from './ui/Controls';
@@ -87,6 +90,23 @@ export function App() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [camera, setCamera] = useState<{ open: boolean; light: boolean }>({ open: false, light: false });
+  const [talking, setTalking] = useState(false);
+  const [narrow, setNarrow] = useState(() => typeof matchMedia !== 'undefined' && matchMedia('(max-width: 879px)').matches);
+  useEffect(() => {
+    const mq = matchMedia('(max-width: 879px)');
+    const on = () => setNarrow(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+  useEffect(() => onSpeakingChange(setTalking), []);
+  // Escape stops the voice anywhere (dialogs use Escape to close themselves).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !document.querySelector('dialog[open]')) stopSpeaking();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
   const [announce, setAnnounce] = useState('');
   // bus
   const [arrivals, setArrivals] = useState<string | null>(null);
@@ -124,7 +144,7 @@ export function App() {
     setAnnounce('');
     requestAnimationFrame(() => setAnnounce(r.text));
     const s = settingsRef.current;
-    say(r, { enabled: s.voice && !s.screenReader, rate: s.speechRate });
+    say(r, { enabled: s.voice && !s.screenReader, rate: s.speechRate, earcons: s.earcons, vibrate: s.vibrate });
   }, []);
 
   /** Live region only (no voice). */
@@ -152,21 +172,31 @@ export function App() {
   );
 
   // Move focus to the new card's heading when the stage changes (not on first load).
-  const firstFocus = useRef(true);
+  // Only on a real change: not on first load (focus stays at the top, so Tab reaches the
+  // search bar first), and not when React re-runs effects in development.
+  const lastStage = useRef<string | null>(null);
   useEffect(() => {
-    if (firstFocus.current) {
-      firstFocus.current = false;
-      return;
-    }
+    const stage = `${mode}|${answer?.q ?? ''}|${resultsTitle}`;
+    const prev = lastStage.current;
+    lastStage.current = stage;
+    if (prev === null || prev === stage) return;
     const id = answer ? 'ans-h' : HEADING_FOR[mode];
     requestAnimationFrame(() => document.getElementById(id)?.focus());
   }, [mode, answer, resultsTitle]);
+
+  // The phone's compass while standing (walking uses the direction of travel):
+  // it turns "to the north-east" into "at 2 o'clock".
+  useEffect(() => {
+    if (mode === 'nav' || mode === 'ride') return;
+    return startCompass((heading) => setMe((m) => ({ ...m, heading })));
+  }, [mode]);
 
   // Real GPS while not walking, when the setting is on.
   useEffect(() => {
     if (!settings.realGps || mode === 'nav' || mode === 'ride') return;
     const gps = createGpsSource();
-    const off = gps.subscribe(setMe);
+    // GPS gives no heading when standing still: keep the compass's.
+    const off = gps.subscribe((p) => setMe((m) => ({ ...p, heading: p.heading ?? m.heading })));
     gps.start();
     return () => {
       off();
@@ -378,6 +408,7 @@ export function App() {
   };
 
   const onAskButton = (kind: 'where' | 'around' | 'bus' | 'toilets') => {
+    void requestCompassPermission();
     const base = { confidence: 1, via: 'keywords' as const };
     if (kind === 'toilets') return void search('toilets', 'Toilets');
     if (kind === 'where') return void ask({ ...base, name: 'whereAmI', utterance: 'Where am I?' }, 'Where am I?');
@@ -386,8 +417,8 @@ export function App() {
   };
 
   /** The search box takes places ("tesco") and questions ("what's on my left"). */
-  const submit = async () => {
-    const text = query.trim();
+  const submit = async (spoken?: string) => {
+    const text = (spoken ?? query).trim();
     if (!text || !index) return;
     setChip(null);
     const qm = quickMatch(text);
@@ -410,6 +441,50 @@ export function App() {
       }
     }
     void search(text);
+  };
+
+  // ---------------------------------------------------------------- voice: the mic in the search bar
+  const [listening, setListening] = useState(false);
+  const listenerRef = useRef<Listener | null>(null);
+  const listenTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const stopListening = async () => {
+    const l = listenerRef.current;
+    listenerRef.current = null;
+    if (listenTimer.current) clearTimeout(listenTimer.current);
+    setListening(false);
+    if (!l) return;
+    void playEarcon('listenEnd');
+    setBusy(true);
+    let heard = '';
+    try {
+      heard = (await l.stop()).trim();
+    } catch {
+      heard = '';
+    }
+    setBusy(false);
+    if (!heard) return speak("I didn't hear anything. Press the microphone and try again.");
+    setQuery(heard);
+    announceOnly(`You said: ${heard}`);
+    void submit(heard);
+  };
+
+  const onMic = async () => {
+    void requestCompassPermission();
+    if (listening) return void stopListening();
+    stopSpeaking(); // the microphone must not hear the app's own voice
+    const made = await createListener();
+    if (!made) return speak('Voice needs the camera service on this laptop, or a browser with speech recognition. Type instead.');
+    try {
+      await made.listener.start();
+    } catch {
+      return speak('The microphone did not open. Allow the microphone for this page.');
+    }
+    listenerRef.current = made.listener;
+    setListening(true);
+    void playEarcon('listen');
+    announceOnly('Listening. Press the microphone again when you have finished.');
+    listenTimer.current = setTimeout(() => void stopListening(), 15000); // never listen forever
   };
 
   const clearSearch = () => {
@@ -674,8 +749,26 @@ export function App() {
       }
     : null;
 
+  // The page title says where you are (screen readers announce it; it names the browser tab).
+  useEffect(() => {
+    const name = sel ? targetName(sel) : '';
+    const stage =
+      mode === 'results' ? resultsTitle
+      : mode === 'place' ? name
+      : mode === 'nav' ? `Walking to ${name}`
+      : mode === 'ride' && ridePlan ? `Bus ${ridePlan.route.name}${ride ? `, ${ride.stopsLeft} stops to go` : ''}`
+      : mode === 'rail' ? `Train to ${trip?.journey.legs[trip.leg]?.to.name ?? ''}`
+      : mode === 'arrived' ? `Arrived at ${name}`
+      : answer ? answer.q
+      : '';
+    document.title = stage ? `${stage} · Offline navigation` : 'Offline navigation';
+  }, [mode, sel, resultsTitle, ridePlan, ride, trip, answer]);
+
   // ---------------------------------------------------------------- derived view values
   const uiZoom = settings.textSize;
+  // On a narrow screen the right-hand buttons stop growing at 1.15x (they are already
+  // 56 px), so at the largest text sizes they still fit above the card and SOS is never covered.
+  const rcZoom = narrow ? Math.min(uiZoom, 1.15) : uiZoom;
   const walking = mode === 'nav';
   const progress = gstate?.progressMeters ?? 0;
   const remaining = route ? Math.max(0, route.lengthMeters - progress) : 0;
@@ -739,69 +832,17 @@ export function App() {
   const arrive = new Date(Date.now() + (remaining / 1.4) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   return (
-    <main className={`shell${settings.mapStyle === 'highContrast' ? ' hc' : ''}`} style={{ background: mapBackground(settings.mapStyle), ['--ui-zoom' as string]: uiZoom }}>
-      {index && (
-        <MapCanvas
-          ref={mapRef}
-          index={index}
-          palette={settings.mapStyle}
-          me={me}
-          meStyle={walking || mode === 'ride' ? 'arrow' : 'dot'}
-          route={showRoute ? route : null}
-          progress={walking ? progress : null}
-          pins={pins}
-          dest={dest}
-          line={
-            mode === 'ride' && ridePlan
-              ? ridePlan.line
-              : mode === 'place' && travel === 'transit' && journey
-                ? journey.legs.flatMap((l) => l.path)
-                : mode === 'rail' && trip
-                  ? (trip.journey.legs[trip.leg]?.path ?? null)
-                  : null
-          }
-          lineStops={
-            mode === 'ride' && ridePlan
-              ? ridePlan.line
-              : mode === 'place' && travel === 'transit' && journey
-                ? journey.legs.filter((l) => l.mode !== 'walking').flatMap((l) => [l.from, l.to])
-                : mode === 'rail' && trip
-                  ? [trip.journey.legs[trip.leg].from, trip.journey.legs[trip.leg].to]
-                  : null
-          }
-          follow={follow}
-          onUserMove={() => setFollow(false)}
-          uiZoom={uiZoom}
-          navMode={walking || mode === 'ride'}
-          label={`Map of ${index.pack.name}${showRoute && sel ? `, route to ${targetName(sel)}` : ''}`}
-        />
-      )}
+    <main className={`shell${settings.mapStyle === 'highContrast' ? ' hc' : ''}${talking ? ' talking' : ''}${uiZoom >= 1.3 ? ' big-text' : ''}`} style={{ background: mapBackground(settings.mapStyle), ['--ui-zoom' as string]: uiZoom, ['--rc-zoom' as string]: rcZoom }}>
 
       <div className="visually-hidden" role="status" aria-live="polite">
         {announce}
       </div>
 
-      <div className="right-col" style={{ zoom: uiZoom }}>
-        <RightControls
-          offline={net === 'offline'}
-          onToggleOffline={() => connectivity.forceOffline(net !== 'offline')}
-          onZoomIn={() => mapRef.current?.zoomBy(1 / 1.6)}
-          onZoomOut={() => mapRef.current?.zoomBy(1.6)}
-          following={follow}
-          onRecenter={() => {
-            setFollow(true);
-            mapRef.current?.flyTo(me, walking ? 0.42 : 0.8);
-          }}
-          onSettings={() => setSettingsOpen(true)}
-          onCamera={() => setCamera({ open: true, light: false })}
-          onHelp={() => setHelpOpen(true)}
-        />
-      </div>
 
       <div className="left-col" style={{ zoom: uiZoom }}>
         {mode !== 'nav' && mode !== 'ride' && mode !== 'rail' && mode !== 'arrived' ? (
           <div className="top-stack">
-            <SearchBar query={query} onQuery={setQuery} onSubmit={submit} onClear={clearSearch} busy={busy} />
+            <SearchBar query={query} onQuery={setQuery} onSubmit={() => void submit()} onClear={clearSearch} busy={busy} listening={listening} onMic={onMic} />
             <CategoryChips active={mode === 'results' ? chip : null} onPick={pickChip} />
           </div>
         ) : (
@@ -918,6 +959,67 @@ export function App() {
         </div>
       </div>
 
+
+      <div className="right-col" style={{ zoom: rcZoom }}>
+        <RightControls
+          offline={net === 'offline'}
+          onToggleOffline={() => connectivity.forceOffline(net !== 'offline')}
+          onZoomIn={() => mapRef.current?.zoomBy(1 / 1.6)}
+          onZoomOut={() => mapRef.current?.zoomBy(1.6)}
+          following={follow}
+          onRecenter={() => {
+            setFollow(true);
+            mapRef.current?.flyTo(me, walking ? 0.42 : 0.8);
+          }}
+          onSettings={() => setSettingsOpen(true)}
+          onCamera={() => setCamera({ open: true, light: false })}
+          onHelp={() => setHelpOpen(true)}
+          speaking={talking}
+          onStopTalking={() => {
+            stopSpeaking();
+            announceOnly('Stopped.');
+          }}
+        />
+      </div>
+
+      {/* The map is last in reading and tab order: the cards and controls come first. CSS keeps it underneath. */}
+      {index && (
+        <MapCanvas
+          ref={mapRef}
+          index={index}
+          palette={settings.mapStyle}
+          me={me}
+          meStyle={walking || mode === 'ride' ? 'arrow' : 'dot'}
+          route={showRoute ? route : null}
+          progress={walking ? progress : null}
+          pins={pins}
+          dest={dest}
+          line={
+            mode === 'ride' && ridePlan
+              ? ridePlan.line
+              : mode === 'place' && travel === 'transit' && journey
+                ? journey.legs.flatMap((l) => l.path)
+                : mode === 'rail' && trip
+                  ? (trip.journey.legs[trip.leg]?.path ?? null)
+                  : null
+          }
+          lineStops={
+            mode === 'ride' && ridePlan
+              ? ridePlan.line
+              : mode === 'place' && travel === 'transit' && journey
+                ? journey.legs.filter((l) => l.mode !== 'walking').flatMap((l) => [l.from, l.to])
+                : mode === 'rail' && trip
+                  ? [trip.journey.legs[trip.leg].from, trip.journey.legs[trip.leg].to]
+                  : null
+          }
+          follow={follow}
+          onUserMove={() => setFollow(false)}
+          uiZoom={uiZoom}
+          navMode={walking || mode === 'ride'}
+          label={`Map of ${index.pack.name}${showRoute && sel ? `, route to ${targetName(sel)}` : ''}`}
+        />
+      )}
+
       <CameraSheet
         open={camera.open}
         startWithLight={camera.light}
@@ -927,7 +1029,17 @@ export function App() {
         online={net === 'online'}
       />
       <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} where={where} smsHref={smsHref} />
-      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} settings={settings} onChange={updateSettings} gpsAvailable={gpsAvailable()} />
+      <SettingsDialog
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        settings={settings}
+        onChange={updateSettings}
+        gpsAvailable={gpsAvailable()}
+        onPreviewSound={(m) => {
+          stopSpeaking();
+          void playEarcon(m).then(() => speak(SOUND_NAMES[m]));
+        }}
+      />
     </main>
   );
 }

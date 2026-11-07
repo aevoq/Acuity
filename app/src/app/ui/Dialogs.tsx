@@ -3,7 +3,9 @@
 // returns to the button that opened them.
 
 import { useEffect, useRef, type ReactNode } from 'react';
+import type { Milestone } from '../../contracts';
 import type { MapPalette } from '../../mapview/MapCanvas';
+import { SOUND_NAMES } from '../earcons';
 import { TEXT_SIZES, type Settings } from '../settings';
 import { Icon } from './Controls';
 
@@ -58,21 +60,23 @@ export interface SettingsDialogProps {
   settings: Settings;
   onChange: (patch: Partial<Settings>) => void;
   gpsAvailable: boolean;
+  /** Play one milestone sound, then say its name. */
+  onPreviewSound: (m: Milestone) => void;
 }
 
-export function SettingsDialog({ open, onClose, settings, onChange, gpsAvailable }: SettingsDialogProps) {
+export function SettingsDialog({ open, onClose, settings, onChange, gpsAvailable, onPreviewSound }: SettingsDialogProps) {
   return (
     <Modal open={open} onClose={onClose} className="settings" labelledBy="settings-h">
       <div className="sheet-body">
         <h2 id="settings-h">Settings</h2>
 
         <fieldset className="choice-set">
-          <legend>Map style</legend>
+          <legend>Contrast</legend>
           <div className="choice-row">
             {(
               [
                 ['standard', 'Standard'],
-                ['highContrast', 'High contrast'],
+                ['highContrast', 'High contrast, map and cards'],
               ] as Array<[MapPalette, string]>
             ).map(([v, label]) => (
               <label key={v} className="choice dark">
@@ -123,6 +127,38 @@ export function SettingsDialog({ open, onClose, settings, onChange, gpsAvailable
             onChange={(e) => onChange({ speechRate: Number(e.target.value) })}
           />
         </label>
+
+        <label className="switch-row">
+          <span>
+            Milestone sounds
+            <small>A short sound before each turn, crossing, bench, stop and arrival. Plays with a screen reader too.</small>
+          </span>
+          <input type="checkbox" checked={settings.earcons} onChange={(e) => onChange({ earcons: e.target.checked })} />
+        </label>
+
+        <label className="switch-row">
+          <span>
+            Vibrate
+            <small>A buzz pattern for each milestone, on phones that can (Android).</small>
+          </span>
+          <input type="checkbox" checked={settings.vibrate} onChange={(e) => onChange({ vibrate: e.target.checked })} />
+        </label>
+
+        <details className="learn-sounds">
+          <summary>Learn the sounds</summary>
+          <ul className="rows ruled">
+            {(Object.keys(SOUND_NAMES) as Milestone[]).map((m) => (
+              <li key={m}>
+                <button type="button" className="row-btn" onClick={() => onPreviewSound(m)}>
+                  <Icon name="play_arrow" fill />
+                  <span className="row-main">
+                    <strong>{SOUND_NAMES[m]}</strong>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </details>
 
         <label className="switch-row">
           <span>

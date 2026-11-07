@@ -16,23 +16,34 @@ export interface Settings {
   screenReader: boolean;
   /** Walk with the browser's real GPS instead of the simulated walk. */
   realGps: boolean;
+  /** Milestone sounds before prompts (turn, crossing, off route, arrived). */
+  earcons: boolean;
+  /** Vibrate for milestones (Android phones). */
+  vibrate: boolean;
 }
 
-export const DEFAULT_SETTINGS: Settings = { mapStyle: 'standard', textSize: 1, voice: true, speechRate: 1, screenReader: false, realGps: false };
+export const DEFAULT_SETTINGS: Settings = { mapStyle: 'standard', textSize: 1, voice: true, speechRate: 1, screenReader: false, realGps: false, earcons: true, vibrate: true };
 export const TEXT_SIZES = [
   { label: 'Default', value: 1 },
   { label: 'Large', value: 1.15 },
   { label: 'Extra large', value: 1.3 },
+  { label: 'Largest', value: 1.5 },
 ];
 
 const KEY = 'nav.settings';
 
+/** First visit: follow the device's own wish for more contrast. */
+function firstVisit(): Settings {
+  const more = typeof matchMedia !== 'undefined' && (matchMedia('(prefers-contrast: more)').matches || matchMedia('(forced-colors: active)').matches);
+  return more ? { ...DEFAULT_SETTINGS, mapStyle: 'highContrast' } : DEFAULT_SETTINGS;
+}
+
 function load(): Settings {
   try {
     const raw = localStorage.getItem(KEY);
-    return raw ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } : DEFAULT_SETTINGS;
+    return raw ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } : firstVisit();
   } catch {
-    return DEFAULT_SETTINGS;
+    return firstVisit();
   }
 }
 

@@ -21,6 +21,7 @@ Endpoints (JSON in, JSON out):
   POST /vision/detect          {image: base64 jpeg} -> {lights: [{colour, confidence, box}], objects: [...], ms}
   POST /assistant/ask          {question? | audio: base64, image?: base64 jpeg, speak?: bool}
                                -> {question, answer, usedCamera, audio?: base64 wav}
+  POST /speech/transcribe      {audio: base64} -> {text}   Whisper only (the app's mic button)
   POST /voice/speak            {text} -> {audio: base64 wav}   Abdullah's Piper voice, for every
                                prompt in the app (cached by text)
 """
@@ -302,6 +303,14 @@ class Handler(BaseHTTPRequestHandler):
                 if state["detector"] is None:
                     return self._send(503, {"error": state["detector_error"] or "detector still loading"})
                 return self._send(200, detect(image))
+            if self.path.startswith("/speech/transcribe"):
+                if not body.get("audio"):
+                    return self._send(400, {"error": "audio required"})
+                if MOCK:
+                    return self._send(200, {"text": "where is the nearest tesco"})
+                if state["whisper"] is None:
+                    return self._send(503, {"error": state["assistant_error"] or "speech not loaded"})
+                return self._send(200, {"text": transcribe(base64.b64decode(body["audio"]))})
             if self.path.startswith("/voice/speak"):
                 text = (body.get("text") or "").strip()
                 if not text:

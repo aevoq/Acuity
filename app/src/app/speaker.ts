@@ -8,13 +8,33 @@
 // Screen-reader users and "Speak prompts" off: nothing is spoken here; the
 // live region carries every prompt in their own screen reader's voice.
 
-import type { SpeakRequest } from '../contracts';
+import type { Milestone, SpeakRequest } from '../contracts';
 import { piperWav, sidecarHealth } from '../vision/sidecar';
+import { buzz, playEarcon } from './earcons';
 
 export interface SpeakOptions {
+  /** Speak the words (off for screen-reader users and "Speak prompts" off). */
   enabled: boolean;
   rate: number;
+  /** Play the milestone sound first (works with a screen reader too). */
+  earcons?: boolean;
+  /** Vibrate for milestones, where the device can. */
+  vibrate?: boolean;
 }
+
+// ---- "is it talking?" for the Stop talking button
+let speaking = false;
+const listeners = new Set<(on: boolean) => void>();
+function setSpeaking(on: boolean) {
+  if (on === speaking) return;
+  speaking = on;
+  for (const l of listeners) l(on);
+}
+export function onSpeakingChange(l: (on: boolean) => void): () => void {
+  listeners.add(l);
+  return () => listeners.delete(l);
+}
+export const isSpeaking = () => speaking;
 
 let piperReady = false;
 let checked = 0;
@@ -29,7 +49,7 @@ async function piperAvailable(): Promise<boolean> {
 }
 
 const cache = new Map<string, string>();
-const queue: Array<{ text: string; rate: number }> = [];
+const queue: Array<{ text: string; rate: number; milestone?: Milestone; earcons: boolean }> = [];
 let current: HTMLAudioElement | null = null;
 /** Ends the wait for whatever is playing now: an interrupt must never leave the queue waiting. */
 let finishCurrent: (() => void) | null = null;
@@ -109,10 +129,13 @@ function playWav(b64: string, rate: number): Promise<void> {
 async function pump() {
   if (busy) return;
   busy = true;
+  setSpeaking(true);
   try {
     while (queue.length) {
-      const { text, rate } = queue.shift()!;
+      const { text, rate, milestone, earcons } = queue.shift()!;
       const gen = generation;
+      if (milestone && earcons) await playEarcon(milestone);
+      if (gen !== generation) continue;
       let wav: string | null = cache.get(text) ?? null;
       if (!wav && (await piperAvailable())) {
         wav = await piperWav(text);
@@ -127,6 +150,7 @@ async function pump() {
     }
   } finally {
     busy = false;
+    setSpeaking(false);
   }
 }
 
@@ -137,10 +161,16 @@ async function pump() {
  *  - "queue": wait for the current prompt (guidance said together: crossing, then turn).
  */
 export function say(req: SpeakRequest, opts: SpeakOptions) {
-  if (!opts.enabled || !req.text) return;
+  if (req.milestone && opts.vibrate !== false) buzz(req.milestone);
+  if (!opts.enabled) {
+    // A screen reader speaks the words; the milestone sound still helps.
+    if (req.milestone && opts.earcons !== false) void playEarcon(req.milestone);
+    return;
+  }
+  if (!req.text) return;
   if (req.priority === 'interrupt') stopSpeaking();
   else if (queue.length >= 2) queue.splice(0, queue.length - 1); // never build a long backlog
-  queue.push({ text: req.text, rate: opts.rate });
+  queue.push({ text: req.text, rate: opts.rate, milestone: req.milestone, earcons: opts.earcons !== false });
   void pump();
 }
 

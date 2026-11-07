@@ -21,11 +21,20 @@ export interface RightControlsProps {
   onSettings: () => void;
   onCamera: () => void;
   onHelp: () => void;
+  /** True while the app is talking: shows Stop talking. */
+  speaking: boolean;
+  onStopTalking: () => void;
 }
 
 export function RightControls(p: RightControlsProps) {
   return (
     <>
+      {p.speaking && (
+        <button type="button" className="net-pill stop-talking" onClick={p.onStopTalking} aria-label="Stop talking (Escape)">
+          <Icon name="volume_off" />
+          <span>Stop talking</span>
+        </button>
+      )}
       <button
         type="button"
         className={`net-pill ${p.offline ? 'offline' : 'online'}`}
@@ -66,9 +75,11 @@ export interface SearchBarProps {
   onSubmit: () => void;
   onClear: () => void;
   busy: boolean;
+  listening: boolean;
+  onMic: () => void;
 }
 
-export function SearchBar({ query, onQuery, onSubmit, onClear, busy }: SearchBarProps) {
+export function SearchBar({ query, onQuery, onSubmit, onClear, busy, listening, onMic }: SearchBarProps) {
   const submit = (e: FormEvent) => {
     e.preventDefault();
     onSubmit();
@@ -81,12 +92,21 @@ export function SearchBar({ query, onQuery, onSubmit, onClear, busy }: SearchBar
       <label htmlFor="q" className="visually-hidden">
         Where to? A place, a kind of place, or a question
       </label>
-      <input id="q" value={query} onChange={(e) => onQuery(e.target.value)} placeholder="Where to? Tesco, pharmacy, toilets…" autoComplete="off" />
+      <input id="q" value={query} onChange={(e) => onQuery(e.target.value)} placeholder="Where to? Tesco, pharmacy, toilets…" autoComplete="off" enterKeyHint="search" />
       {query && (
         <button type="button" className="round-btn clear" aria-label="Clear search" onClick={onClear}>
           <Icon name="close" />
         </button>
       )}
+      <button
+        type="button"
+        className={`round-btn mic${listening ? ' on' : ''}`}
+        aria-pressed={listening}
+        aria-label={listening ? 'Stop listening and search' : 'Speak: a place, or a question like what is on my left'}
+        onClick={onMic}
+      >
+        <Icon name={listening ? 'graphic_eq' : 'mic'} />
+      </button>
       <button type="submit" className="search-go" aria-label="Search" disabled={busy}>
         <span className="search-go-text">{busy ? '…' : 'Search'}</span>
         <Icon name="search" />
