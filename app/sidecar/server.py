@@ -8,8 +8,11 @@ http://127.0.0.1:8765 that the page calls:
     objects, and traffic_light_colour() says which lamp is lit.
   - Abdullah's voice assistant (Abdullah/voice_assistant.py): faster-whisper
     hears the question, his routing decides whether it needs the camera
-    (needs_camera / NEED_CAMERA), Ollama gemma3:4b answers with his prompts and
-    conversation memory, Piper speaks.
+    (needs_camera / NEED_CAMERA), his produce() answers with his prompts, checks
+    and conversation memory on the vision model his "auto" setting picks
+    (qwen2.5vl:7b if installed and the Mac has 16 GB, else gemma3:4b), Piper speaks.
+    Speech goes through his transcribe_now(): background removed, only the
+    nearest speaker kept.
 
 The page sends camera frames and recorded audio; nothing leaves this machine.
 
@@ -33,6 +36,7 @@ import base64
 import importlib.util
 import json
 import os
+import queue
 import sys
 import tempfile
 import threading
@@ -116,7 +120,31 @@ def load_abdullah():
     return mod
 
 
+class BrowserFrame:
+    """
+    Stands in for Abdullah's always-open webcam (his Camera class): the frame the page sent
+    with the question. The page already picks the sharpest of a short burst, so it is never
+    "blurry" here; his grab_frame() then brightens it, adds the zoomed or left/right views and
+    the right check for the question, exactly as with his webcam.
+    """
+    running = True
+
+    def __init__(self, frame):
+        self.frame = frame
+
+    def snapshot(self):
+        return self.frame, 1.0
+
+    def steady_frame(self, wait=0.5):
+        return self.frame, 1.0
+
+    def is_blurry(self, score):
+        return False
+
+
 def ask(question, image_bytes, want_audio):
+    """One turn of Abdullah's assistant: his produce() runs unchanged (camera routing,
+    NEED_CAMERA, his prompts and checks, needless-warning filter, "the way is clear" softened)."""
     va = state["assistant"]
     import cv2
     import numpy as np
@@ -124,37 +152,31 @@ def ask(question, image_bytes, want_audio):
         n = va.normalise(question)
         if n in va.HELP_WORDS:
             answer, used_camera = va.HELP_TEXT, False
-        elif n in va.REPEAT_WORDS and va.history:
-            answer, used_camera = va.history[-1]["content"], False
+        elif n in va.REPEAT_WORDS:
+            answer, used_camera = va.last_answer or "I haven't said anything yet. Ask me something first.", False
         else:
-            stop = threading.Event()
-            spoken, used_camera = [], va.needs_camera(question)
-            if not used_camera:
-                sentences = va.stream_sentences(va.build_messages(va.TEXT_PROMPT, question), stop)
-                first = next(sentences, None)
-                if first is not None and "NEED_CAMERA" in first.upper():
-                    used_camera = True
-                    sentences.close()
-                else:
-                    spoken += [s for s in ([first] if first else []) + list(sentences)]
-            if used_camera:
-                if not image_bytes:
-                    spoken = ["I can't see anything yet. Open the camera and point it where you want me to look."]
-                else:
-                    frame = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
-                    if frame is None or float(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).mean()) < va.DARK_FRAME_LEVEL:
-                        spoken = ["It's very dark, or the camera might be covered. Could you turn on a light or point the camera somewhere else?"]
-                    else:
-                        spoken = list(va.stream_sentences(va.build_messages(va.CAMERA_PROMPT, question, image_bytes), stop))
+            frame = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR) if image_bytes else None
+            va.camera = BrowserFrame(frame) if frame is not None else None
+            va.question_frame.update(frame=frame, score=1.0, time=time.time())
+            out_q, stop, info = queue.Queue(), threading.Event(), {}
+            real_synth = va.synth_audio
+            va.synth_audio = lambda text: None   # the page fetches the voice itself (/voice/speak)
+            try:
+                va.produce(question, out_q, stop, info)   # puts (sentence, audio) pieces, then None
+            finally:
+                va.synth_audio = real_synth
+            spoken = []
+            while True:
+                item = out_q.get()
+                if item is None:
+                    break
+                spoken.append(item[0])
+            used_camera = bool(info.get("camera"))
             answer = va.clean_for_speech(" ".join(spoken)) or "Sorry, I had a problem working that out. Could you try again?"
-            va.remember(question, answer)
-    audio = None
-    if want_audio and state["piper"]:
-        path = os.path.join(tempfile.gettempdir(), f"sidecar-{time.time_ns()}.wav")
-        if va.synth_to_file(answer, path):
-            with open(path, "rb") as f:
-                audio = base64.b64encode(f.read()).decode()
-            os.remove(path)
+            va.last_answer = answer
+            if info.get("ok", True):
+                va.remember(question, answer)
+    audio = speak_wav(answer) if want_audio else None
     return {"question": question, "answer": answer, "usedCamera": used_camera, "audio": audio}
 
 
@@ -169,12 +191,10 @@ def speak_wav(text):
     va = state["assistant"]
     if va is None or not state["piper"]:
         return None
-    path = os.path.join(tempfile.gettempdir(), f"sidecar-say-{time.time_ns()}.wav")
-    if not va.synth_to_file(va.clean_for_speech(text), path):
+    data = va.synth_wav_bytes(va.clean_for_speech(text))
+    if not data:
         return None
-    with open(path, "rb") as f:
-        b64 = base64.b64encode(f.read()).decode()
-    os.remove(path)
+    b64 = base64.b64encode(data).decode()
     if len(voice_cache) > 500:
         voice_cache.clear()
     voice_cache[text] = b64
@@ -204,26 +224,62 @@ def decode_to_mono(path, rate):
     return np.concatenate(chunks).astype(np.float32) / 32768.0
 
 
-def transcribe_hinted(audio_bytes, hint):
-    """Whisper with a custom hint, e.g. "Hey Acuity", so the wake word is spelled right."""
+whisper_lock = threading.Lock()
+
+
+def browser_audio(audio_bytes):
     va = state["assistant"]
     with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
         f.write(audio_bytes)
         path = f.name
     try:
-        audio = decode_to_mono(path, va.SAMPLE_RATE)
+        return decode_to_mono(path, va.SAMPLE_RATE)
     finally:
         os.remove(path)
+
+
+def background_from_lead_in(audio):
+    """
+    Abdullah's VoiceFocus learns the room from the mic between questions. The page sends one
+    clip at a time, which starts with about half a second from before the person spoke: those
+    quiet blocks are the background his noise removal subtracts. Blocks that are loud compared
+    with the speech are skipped, so a voice is never learned as noise.
+    """
+    import numpy as np
+    va = state["assistant"]
+    focus = va.VoiceFocus()
+    B = va.BLOCK
+    blocks = [audio[i:i + B] for i in range(0, audio.size - B + 1, B)]
+    if len(blocks) < 8:
+        return focus
+    levels = sorted(float(np.sqrt(np.mean(b ** 2))) for b in blocks)
+    speech_level = levels[int(len(levels) * 0.9)]
+    for b in blocks[:5]:
+        if float(np.sqrt(np.mean(b ** 2))) < 0.3 * speech_level:
+            focus.learn_noise(b)
+    return focus
+
+
+def transcribe_clip(audio_bytes, hint=None):
+    """
+    Browser audio -> text with Abdullah's transcribe_now(), unchanged: background removed, only
+    the loudest (nearest) speaker kept, his beam and noise rules, hallucinations dropped.
+    `hint` replaces his Whisper hint for this clip (the app adds "Hey Acuity" and what it last said).
+    """
+    va = state["assistant"]
+    audio = browser_audio(audio_bytes)
     if audio.size == 0 or float(abs(audio).max()) < 1e-4:
         return ""
-    audio = audio / float(abs(audio).max()) * 0.9
-    # One pass (beam 1): listening for the wake word has to be quick.
-    segments, _ = state["whisper"].transcribe(
-        audio, language="en", beam_size=1, temperature=0.0,
-        condition_on_previous_text=False, without_timestamps=True, initial_prompt=hint,
-    )
-    parts = [s.text.strip() for s in segments if not (s.no_speech_prob > 0.6 and s.avg_logprob < -1.0)]
-    return " ".join(parts).strip()
+    with whisper_lock:
+        real_prompt = va.whisper_prompt
+        va.focus = background_from_lead_in(audio)
+        if hint:
+            va.whisper_prompt = lambda: hint
+        try:
+            text = va.transcribe_now(state["whisper"], audio)
+        finally:
+            va.whisper_prompt = real_prompt
+    return text or ""   # None = only background noise
 
 
 INTENTS = {
@@ -245,6 +301,16 @@ INTENTS = {
 }
 
 
+INTENT_MODEL = "gemma3:4b"   # picking a tool is quick text work: the small model, whatever answers camera questions
+
+
+def intent_model():
+    if "intent_model" not in state:
+        va = state["assistant"]
+        state["intent_model"] = INTENT_MODEL if INTENT_MODEL in va.installed_models() else va.active_model
+    return state["intent_model"]
+
+
 def agent_intent(utterance):
     """Abdullah's gemma3 picks ONE tool and its arguments. It never writes the answer."""
     import ollama
@@ -254,7 +320,7 @@ def agent_intent(utterance):
         "Reply with JSON only: {\"intent\": <one of the names>, \"query\": <place words or null>, \"side\": <left|right|ahead|behind or null>}.\n"
         + "\n".join(f"- {k}: {v}" for k, v in INTENTS.items())
     )
-    r = ollama.chat(model=va.VISION_MODEL, format="json", options={"temperature": 0, "num_predict": 60}, keep_alive="30m",
+    r = ollama.chat(model=intent_model(), format="json", options={"temperature": 0, "num_predict": 60}, keep_alive="30m",
                     messages=[{"role": "system", "content": prompt}, {"role": "user", "content": utterance}])
     try:
         d = json.loads(r["message"]["content"])
@@ -267,18 +333,6 @@ def agent_intent(utterance):
     if d.get("side") in ("left", "right", "ahead", "behind"):
         out["side"] = d["side"]
     return out
-
-
-def transcribe(audio_bytes):
-    """Browser audio (webm/ogg/wav) -> text, with Abdullah's Whisper settings."""
-    va = state["assistant"]
-    with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
-        f.write(audio_bytes)
-        path = f.name
-    try:
-        return va.transcribe(state["whisper"], decode_to_mono(path, va.SAMPLE_RATE))
-    finally:
-        os.remove(path)
 
 
 # =========================== mock mode (no models) ===========================
@@ -317,12 +371,17 @@ def load_everything():
     try:
         print("Loading Abdullah's assistant…")
         va = load_abdullah()
+        va.SAVE_DEBUG_AUDIO = False   # his tuning files (last_question.wav, last_view.jpg) stay out of the repo
+        va.SAVE_DEBUG_IMAGE = False
+        va.active_model = va.choose_model()   # his "auto": the most accurate installed model this Mac can hold
+        va.focus = va.VoiceFocus()
         state["assistant"] = va
         state["whisper"] = va.load_whisper()
         va.load_voice()
         state["piper"] = True
         threading.Thread(target=va.warm_up_model, daemon=True).start()
-        print("  assistant ready (model:", va.VISION_MODEL, ")")
+        threading.Thread(target=lambda: agent_intent("hello"), daemon=True).start()   # load the intent model too
+        print("  assistant ready (model:", va.active_model, ")")
     except Exception as e:
         state["assistant_error"] = f"{type(e).__name__}: {e}"
         print("  assistant failed:", state["assistant_error"])
@@ -351,7 +410,7 @@ class Handler(BaseHTTPRequestHandler):
                 "detector": MOCK or state["detector"] is not None, "detectorError": state["detector_error"],
                 "assistant": MOCK or state["assistant"] is not None, "assistantError": state["assistant_error"],
                 "speech": MOCK or state["whisper"] is not None, "voice": state["piper"],
-                "model": getattr(state["assistant"], "VISION_MODEL", None),
+                "model": getattr(state["assistant"], "active_model", None),
             })
         self._send(404, {"error": "not found"})
 
@@ -378,7 +437,7 @@ class Handler(BaseHTTPRequestHandler):
                 if state["whisper"] is None:
                     return self._send(503, {"error": state["assistant_error"] or "speech not loaded"})
                 audio = base64.b64decode(body["audio"])
-                text = transcribe_hinted(audio, body["hint"]) if body.get("hint") else transcribe(audio)
+                text = transcribe_clip(audio, body.get("hint"))
                 return self._send(200, {"text": text})
             if self.path.startswith("/agent/intent"):
                 utterance = (body.get("utterance") or "").strip()
@@ -406,7 +465,7 @@ class Handler(BaseHTTPRequestHandler):
                 if state["assistant"] is None:
                     return self._send(503, {"error": state["assistant_error"] or "assistant still loading"})
                 if not question and body.get("audio"):
-                    question = transcribe(base64.b64decode(body["audio"]))
+                    question = transcribe_clip(base64.b64decode(body["audio"]))
                 if not question:
                     return self._send(200, {"question": "", "answer": "I didn't catch that. Could you say it again?", "usedCamera": False, "audio": None})
                 return self._send(200, ask(question, image, bool(body.get("speak"))))

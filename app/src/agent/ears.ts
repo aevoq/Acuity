@@ -16,6 +16,9 @@ export interface EarsOptions {
   onState: (s: EarsState) => void;
   /** A finished utterance (already transcribed). `mode` says how it was heard. */
   onUtterance: (text: string, mode: 'open' | 'wake') => void;
+  /** What the app said last. Replies reuse its words ("the first one", "Tesco Express"), so
+   *  Whisper hears them better with it in the hint (Abdullah's whisper_prompt does the same). */
+  lastSaid?: () => string;
 }
 
 const WAKE_HINT = 'Hey Acuity. Hey Acuity, what is around me? Where is the nearest bench?';
@@ -77,7 +80,7 @@ type Recognition = {
   stop(): void;
 };
 
-export function createEars({ onState, onUtterance }: EarsOptions) {
+export function createEars({ onState, onUtterance, lastSaid }: EarsOptions) {
   let mode: 'off' | 'open' | 'wake' = 'off';
   let stream: MediaStream | null = null;
   let ctx: AudioContext | null = null;
@@ -140,7 +143,8 @@ export function createEars({ onState, onUtterance }: EarsOptions) {
     if (heardIn === 'open') onState('thinking');
     let text = '';
     try {
-      text = (await transcribeSpeech(wavBase64(all, rate), WAKE_HINT)).text?.trim() ?? '';
+      const hint = `${WAKE_HINT} ${(lastSaid?.() ?? '').slice(-200)}`.trim();
+      text = (await transcribeSpeech(wavBase64(all, rate), hint)).text?.trim() ?? '';
     } catch {
       text = '';
     }

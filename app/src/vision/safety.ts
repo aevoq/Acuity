@@ -15,6 +15,26 @@ const UNSAFE = [
   /\b(the\s+)?road\s+is\s+(clear|empty)\b/i,
 ];
 
+/**
+ * The camera saying the way is clear, or telling the person to walk on. A camera misses
+ * kerbs, poles and glass, so a vision model never gets to say this as a fact (Abdullah's
+ * assistant softens one form of it; these catch the others).
+ */
+export const PATH_ADVISORY = 'The camera can miss things, so check the way with your cane or dog.';
+const CLEAR_CLAIMS = [
+  /\b(path|way|route|floor|ground|pavement|area|road)\b[^.!?]*\b(is|looks|appears|seems)\s+(completely\s+|totally\s+|fully\s+)?(clear|empty|free|unobstructed|safe)\b/i,
+  /\bno\s+(visible\s+|other\s+)?(objects?|obstacles?|obstructions?|hazards?|dangers?)\b/i,
+  /\b(clear|unobstructed)\s+(path|way|route)\b/i,
+  /\bnothing\s+(is\s+)?(in|blocking)\s+(your|the)\s+(way|path)\b/i,
+  /\b(continue|keep|carry on)\s+((walking|going|moving)\s+)?(straight\s+)?(ahead|forward|on|walking|going)\b/i,
+  /\b(walk|move|step|head)\s+(straight\s+)?(forward|ahead|on)\b/i,
+];
+/** A hedged sentence is honest ("I can't see anything in your way, but the camera can miss things"). */
+const HEDGED = /\b(miss|cane|guide dog|can'?t be sure|cannot be sure|not sure|might not|may not)\b/i;
+export function isClearClaim(sentence: string): boolean {
+  return !HEDGED.test(sentence) && CLEAR_CLAIMS.some((re) => re.test(sentence));
+}
+
 /** "can't tell you", "not safe", "never say"…: a refusal or a warning, not a judgement. */
 const NEGATED = new RegExp(
   [
@@ -39,17 +59,24 @@ export function isUnsafe(text: string): boolean {
 }
 
 /**
- * Make a model's answer safe to speak: any sentence that judges safety is
- * replaced by the advisory (once), and the answer is cut to `maxWords`.
+ * Make a model's answer safe to speak: any sentence that judges crossing safety is replaced
+ * by the advisory (once); a claim that the way is clear, or a "keep walking", by the path
+ * advisory (once, unless the answer already says the camera can miss things). Then cut to `maxWords`.
  */
 export function makeSafe(text: string, maxWords = 60): string {
   const sentences = text.replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s+/);
-  let replaced = false;
+  let crossing = false;
+  let path = /camera can miss things/i.test(text);
   const out: string[] = [];
-  for (const s of sentences) {
+  for (const raw of sentences) {
+    // A piece cut at a comma upstream can start "and the ground…": start it properly.
+    const s = raw.replace(/^(and|but|so)\s+([a-z])/i, (_m, _w, c: string) => c.toUpperCase());
     if (isUnsafe(s)) {
-      if (!replaced) out.push(ADVISORY);
-      replaced = true;
+      if (!crossing) out.push(ADVISORY);
+      crossing = true;
+    } else if (isClearClaim(s)) {
+      if (!path) out.push(PATH_ADVISORY);
+      path = true;
     } else out.push(s);
   }
   const words = out.join(' ').split(' ');

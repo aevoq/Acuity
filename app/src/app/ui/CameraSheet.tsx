@@ -135,7 +135,7 @@ export function CameraSheet(p: CameraSheetProps) {
     const v = videoRef.current;
     setBusy(true);
     try {
-      const frame = v ? await sharpestFrame(v) : null;
+      const frame = v ? await sharpestFrame(v, 4, 120, 1920) : null;
       if (health?.assistant) {
         // Spoken by the app's speaker, in Abdullah's Piper voice like every other prompt.
         const r = await askAssistant({ ...q, image: frame?.jpeg ?? null, speak: false });

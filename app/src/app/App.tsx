@@ -919,6 +919,7 @@ export function App() {
       },
     });
     earsRef.current = createEars({
+      lastSaid: () => lastSaid.current ?? '',
       onState: (st) => {
         setEarsState(st);
         // Nobody answered her question: the conversation is over, route updates resume.

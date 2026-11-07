@@ -12,7 +12,7 @@ import { askAssistant, detectLights } from './sidecar';
 
 async function openHidden(): Promise<{ video: HTMLVideoElement; stop: () => void }> {
   const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
     audio: false,
   });
   const video = document.createElement('video');
@@ -89,7 +89,7 @@ export async function watchLight(onChange: (signal: Signal, sentence: string) =>
 export async function lookAndAsk(question: string): Promise<string> {
   const cam = await openHidden();
   try {
-    const frame = await sharpestFrame(cam.video);
+    const frame = await sharpestFrame(cam.video, 4, 120, 1920);
     const r = await askAssistant({ question, image: frame?.jpeg ?? null, speak: false });
     return makeSafe(r.answer);
   } finally {

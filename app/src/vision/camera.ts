@@ -6,7 +6,7 @@
 /** Open the back camera (a laptop's webcam on a laptop). */
 export async function openCamera(video: HTMLVideoElement): Promise<MediaStream> {
   const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
     audio: false,
   });
   video.srcObject = stream;
@@ -71,11 +71,14 @@ export function grabFrame(video: HTMLVideoElement, maxSide = 896, quality = 0.85
   return { jpeg: canvas.toDataURL('image/jpeg', quality).split(',')[1], sharp, brightness };
 }
 
-/** The sharpest of a short burst (the PRD: "grab 3 to 5 frames, send only the sharpest"). */
-export async function sharpestFrame(video: HTMLVideoElement, count = 4, gapMs = 120): Promise<Frame | null> {
+/**
+ * The sharpest of a short burst (the PRD: "grab 3 to 5 frames, send only the sharpest").
+ * `maxSide` 1920 keeps full HD for Abdullah's assistant, which zooms into the centre to read signs.
+ */
+export async function sharpestFrame(video: HTMLVideoElement, count = 4, gapMs = 120, maxSide = 896): Promise<Frame | null> {
   let best: Frame | null = null;
   for (let i = 0; i < count; i++) {
-    const f = grabFrame(video);
+    const f = grabFrame(video, maxSide);
     if (f && (!best || f.sharp > best.sharp)) best = f;
     if (i < count - 1) await new Promise((r) => setTimeout(r, gapMs));
   }

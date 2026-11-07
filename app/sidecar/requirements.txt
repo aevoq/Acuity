@@ -8,6 +8,7 @@ ollama
 faster-whisper
 sounddevice
 piper-tts
-# Also needed, outside pip:
-#   Ollama app (https://ollama.com) with:  ollama pull gemma3:4b
+# Also needed, outside pip (his "auto" setting picks the best installed model this Mac can hold):
+#   Ollama app (https://ollama.com) with:  ollama pull gemma3:4b   (tool picking; camera answers if nothing better)
+#                                     ollama pull qwen2.5vl:7b (camera answers, more accurate; needs 16 GB of memory)
 #   Abdullah's Piper voice file en_GB-southern_english_female-low.onnx (+ .json) in Abdullah/
