@@ -41,6 +41,7 @@ import { useSettings } from './settings';
 import { onSpeakingChange, say, stopSpeaking } from './speaker';
 import { createListener, type Listener } from './listen';
 import { createAcuity } from '../agent/acuity';
+import { lookAndAsk, readLight, watchLight as watchLightBg } from '../vision/quickLook';
 import { afterWakeWord, createEars } from '../agent/ears';
 import { AcuityBar, Welcome, type AcuityState, type Caption } from './ui/AcuityBar';
 import { playEarcon, SOUND_NAMES } from './earcons';
@@ -110,6 +111,8 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [camera, setCamera] = useState<{ open: boolean; light: boolean }>({ open: false, light: false });
   const [talking, setTalking] = useState(false);
+  const talkingRef = useRef(false);
+  talkingRef.current = talking;
   const [narrow, setNarrow] = useState(() => typeof matchMedia !== 'undefined' && matchMedia('(max-width: 879px)').matches);
   useEffect(() => {
     const mq = matchMedia('(max-width: 879px)');
@@ -148,16 +151,27 @@ export function App() {
   const rideRef = useRef<ReturnType<typeof createBusRide> | null>(null);
   const unsubRef = useRef<(() => void) | null>(null);
   const lastSaid = useRef<string | null>(null);
+  /** The person is in a conversation with Acuity: route updates are held until it ends. */
+  const conversing = useRef(false);
+  const heldGuidance = useRef<SpeakRequest | null>(null);
+  /** What the app said lately, to recognise its own voice coming back through the mic. */
+  const recentSaid = useRef<Array<{ text: string; at: number }>>([]);
   const meRef = useRef(me);
   meRef.current = me;
 
   // ---------------------------------------------------------------- output
   /** Every prompt: live region (always) + voice (when wanted). Stable, so guidance can hold it. */
-  const speak = useCallback((req: SpeakRequest | string) => {
+  const speak = useCallback((req: SpeakRequest | string, fromAcuity = false) => {
     // A plain string is the answer to something the person just did (a button, a question):
     // it replaces whatever is being said. Guidance passes a SpeakRequest with its own priority.
     const r: SpeakRequest = typeof req === 'string' ? { text: req, priority: 'interrupt' } : req;
     if (!r.text) return;
+    // While the person is talking to Acuity, route updates wait (off-route still comes through).
+    if (conversing.current && !fromAcuity && typeof req !== 'string' && r.milestone !== 'offRoute') {
+      heldGuidance.current = r;
+      return;
+    }
+    recentSaid.current = [...recentSaid.current.filter((x) => Date.now() - x.at < 15000), { text: r.text.toLowerCase(), at: Date.now() }];
     lastSaid.current = r.text;
     if (acuityOnRef.current) addCaption('acuity', r.text);
     // Clear first, so the same words twice in a row are announced twice.
@@ -856,6 +870,8 @@ export function App() {
     },
   };
   const earsRef = useRef<ReturnType<typeof createEars> | null>(null);
+  const lightWatchStop = useRef<(() => void) | null>(null);
+  useEffect(() => () => lightWatchStop.current?.(), []);
   const brainRef = useRef<ReturnType<typeof createAcuity> | null>(null);
 
   const ensureAcuity = () => {
@@ -874,7 +890,7 @@ export function App() {
         };
       },
       tools,
-      say: (text, o) => speak({ text, priority: o?.queue ? 'queue' : 'interrupt' }),
+      say: (text, o) => speak({ text, priority: o?.queue ? 'queue' : 'interrupt' }, true),
       caption: addCaption,
       typeQuery: (t) => call<Promise<void>>('typeQuery', t),
       search: (q) => call<Promise<number>>('search', q),
@@ -886,20 +902,37 @@ export function App() {
       startJourney: () => call('startJourney'),
       openTaxi: () => call('openTaxi'),
       openCamera: (l) => call('openCamera', l),
+      checkLight: () => readLight(),
+      watchLight: (on) => {
+        lightWatchStop.current?.();
+        lightWatchStop.current = null;
+        if (on)
+          void watchLightBg((_s, sentence) => speak({ text: sentence, priority: 'interrupt' })).then((stop) => (lightWatchStop.current = stop)).catch(() => speak("I couldn't open the camera."));
+      },
+      describeScene: (q) => lookAndAsk(q),
       openHelp: () => call('openHelp'),
       runIntent: (i) => call<Promise<ToolResult>>('runIntent', i),
       listen: () => void earsRef.current?.listenOnce().catch(() => speak("I can't open the microphone. Allow it for this page, or type instead.")),
-      rest: () => earsRef.current?.rest(),
+      rest: () => {
+        earsRef.current?.rest();
+        releaseGuidance();
+      },
     });
     earsRef.current = createEars({
-      onState: (st) => setEarsState(st),
+      onState: (st) => {
+        setEarsState(st);
+        // Nobody answered her question: the conversation is over, route updates resume.
+        if ((st === 'wake' || st === 'off') && conversing.current && !talkingRef.current) releaseGuidance();
+      },
       onUtterance: (text, how) => {
         const brain = brainRef.current;
-        if (!brain) return;
+        if (!brain || isEcho(text)) return; // the app's own voice, heard back
         if (how === 'open') return brain.handle(afterWakeWord(text) ?? text);
         const rest = afterWakeWord(text);
         if (rest === null) return; // not for Acuity
+        conversing.current = true; // she's listening to you now: the route waits
         stopSpeaking();
+        void playEarcon('listen');
         if (rest) brain.handle(rest);
         else brain.wake();
       },
@@ -915,7 +948,25 @@ export function App() {
     // Development only: lets tests talk to Acuity's brain directly ("say" a sentence).
     if (import.meta.env.DEV) (window as unknown as { __acuity?: unknown }).__acuity = brainRef.current;
   };
+  /** Is this transcript the app's own recent words, picked up by the mic? */
+  const isEcho = (heard: string) => {
+    const words = heard.toLowerCase().replace(/[^a-z0-9' ]/g, ' ').split(/\s+/).filter((w) => w.length > 2 && !/^(hey|acuity)$/.test(w));
+    if (words.length < 2) return false;
+    return recentSaid.current.some(({ text }) => words.filter((w) => text.includes(w)).length / words.length >= 0.7);
+  };
+
+  /** The conversation ended: say the current next step (fresh distance), not a stale held one. */
+  const releaseGuidance = () => {
+    conversing.current = false;
+    const held = heldGuidance.current;
+    heldGuidance.current = null;
+    if (!held) return;
+    const fresh = live.current.mode === 'nav' ? guidanceRef.current?.nextStep() : null;
+    speak({ text: fresh ?? held.text, milestone: held.milestone, priority: 'queue' });
+  };
+
   const talkToAcuity = () => {
+    conversing.current = true;
     ensureAcuity();
     stopSpeaking();
     brainRef.current?.wake();

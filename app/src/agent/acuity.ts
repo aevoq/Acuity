@@ -54,6 +54,12 @@ export interface AcuityDeps {
   startJourney(): void;
   openTaxi(): void;
   openCamera(light: boolean): void;
+  /** Look at the traffic light through the camera (in the background) and say what it shows. */
+  checkLight(): Promise<{ sentence: string }>;
+  /** Keep watching the light and announce changes (true), or stop (false). */
+  watchLight(on: boolean): void;
+  /** Look ahead with the camera and answer with Abdullah's camera assistant. */
+  describeScene(question: string): Promise<string>;
   openHelp(): void;
   /** Run a standard intent through runIntent (tools + bus times). */
   runIntent(i: Intent): Promise<ToolResult>;
@@ -70,7 +76,8 @@ type Pending =
   | { kind: 'startJourney' }
   | { kind: 'goInstead'; target: Target }
   | { kind: 'pickNearby'; items: Target[] }
-  | { kind: 'confirmStop' };
+  | { kind: 'confirmStop' }
+  | { kind: 'watchLight' };
 
 const YES = /^(yes|yeah|yep|yup|sure|ok|okay|please|go ahead|do it|let'?s go|go|start|correct|that one|sounds good|alright|yes please|right)\b/;
 const NO = /^(no|nope|nah|not that|not now|no thanks|don'?t|cancel|never ?mind)\b/;
@@ -90,8 +97,29 @@ const PROFILES: Array<[RegExp, RouteProfileId]> = [
   [/\brest stops?\b|\bbenches\b|\bplaces to sit\b/, 'restStops'],
 ];
 
+/** What the person can say instead of "start", leaving out the route type they already have. */
+const ROUTE_CHOICES: Array<[RouteProfileId, string]> = [
+  ['shortest', 'shortest'],
+  ['fewestCrossings', 'fewest crossings'],
+  ['stepFree', 'step-free'],
+  ['mainRoads', 'main roads'],
+  ['restStops', 'rest stops'],
+];
+function startOrChoose(current: RouteProfileId): string {
+  const others = ROUTE_CHOICES.filter(([id]) => id !== current).map(([, words]) => words);
+  return `Say "start" to begin. Or choose another route: ${others.join(', ')}, or go by bus.`;
+}
+function routeSummary(r: Route): string {
+  const cross = `${r.crossings} crossing${r.crossings === 1 ? '' : 's'}${r.crossings ? `, ${r.signalledCrossings} with signals` : ''}`;
+  return `${walkMinutes(r.lengthMeters)} minutes on foot, ${cross}.`;
+}
+
 /** Questions answered directly, never taken as a destination ("where's the nearest bench" is not a place to search). */
-const QUESTION_WORDS = /\b(bench|benches|sit down|somewhere to sit|how far|how long|when (will|do) i|what do you see|describe|in front of me|around me|where am i|on my (left|right)|stop|cancel)\b/;
+const QUESTION_WORDS = /\b(bench|benches|sit down|somewhere to sit|how far|how long|when (will|do) i|what do you see|describe|in front of me|around me|where am i|on my (left|right)|stop|cancel|traffic lights?|signal|green man|red man)\b/;
+/** "Is the light red?", "can you check the traffic light", "is it the green man?" */
+const LIGHT = /\b(traffic lights?|the lights?|signals?|green man|red man|is it (red|green)|(red|green) light|crossing lights?|pedestrian lights?)\b/;
+/** "What's in front of me?", "what does the sign say?" */
+const SCENE = /\b(what do you see|what can you see|describe|in front of me|what('?s| is) (ahead|there)|read (the|this|that) sign|what does (the|this|that) sign say|look ahead)\b/;
 
 const norm = (t: string) => t.toLowerCase().replace(/[.,!?]/g, ' ').replace(/\s+/g, ' ').trim();
 /** How to call her back: the wake word works during a journey; elsewhere the Talk button. */
@@ -150,9 +178,16 @@ export function createAcuity(d: AcuityDeps) {
       // Outside the walking area: the place card has already asked TfL.
       return ask(`${targetName(t)} is outside the walking area, so I'm finding public transport. Say "start" for the fastest option, or "taxi".`, { kind: 'startJourney' }, true);
     }
-    const r = v.route;
-    const cross = `${r.crossings} crossing${r.crossings === 1 ? '' : 's'}${r.crossings ? `, ${r.signalledCrossings} with signals` : ''}`;
-    ask(`${targetName(t)}: ${walkMinutes(r.lengthMeters)} minutes on foot, ${cross}. Say "start" to begin, or ask for fewest crossings, step-free, or a bus.`, { kind: 'start' });
+    ask(`${targetName(t)}: ${routeSummary(v.route)} ${startOrChoose(v.route.profile)}`, { kind: 'start' });
+  }
+
+  /** After a route type is picked: the new route's numbers, what it costs, and the other choices. */
+  function routeChosen(p: RouteProfileId) {
+    const r = d.view().route;
+    if (!r) return ask(`${PROFILE_LABELS[p]} route. ${startOrChoose(p)}`, { kind: 'start' }, true);
+    // tradeOff reads "Fewest crossings route: about the same time, 2 fewer crossings…": drop its own label.
+    const trade = r.tradeOff ? ` Compared with the shortest: ${r.tradeOff.replace(/^[^:]*route:\s*/i, '')}` : '';
+    return ask(`${PROFILE_LABELS[p]} route: ${routeSummary(r)}${trade} ${startOrChoose(p)}`, { kind: 'start' }, true);
   }
 
   function start() {
@@ -206,7 +241,7 @@ export function createAcuity(d: AcuityDeps) {
         const prof = PROFILES.find(([re]) => re.test(t));
         if (prof) {
           d.setProfile(prof[1]);
-          return ask(`${PROFILE_LABELS[prof[1]]} route. Say "start" when you're ready.`, { kind: 'start' }, true);
+          return routeChosen(prof[1]);
         }
         if (/\b(bus|train|tube|public transport|transport)\b/.test(t)) {
           d.showTransit();
@@ -236,6 +271,13 @@ export function createAcuity(d: AcuityDeps) {
         }
         if (NO.test(t)) return close('Okay.');
       }
+      if (p.kind === 'watchLight') {
+        if (YES.test(t)) {
+          d.watchLight(true);
+          return close("I'm watching the light and I'll tell you when it changes. Say 'stop watching' to stop.");
+        }
+        if (NO.test(t)) return close('Okay.');
+      }
       if (p.kind === 'confirmStop') {
         if (YES.test(t)) {
           d.endWalk();
@@ -259,14 +301,36 @@ export function createAcuity(d: AcuityDeps) {
       return close(d.tools.routeStatus({ route: v.route, remaining: v.remaining, next: v.nextInstruction }).say);
     if (/\b(bench|benches|sit down|somewhere to sit|rest)\b/.test(t))
       return close(d.tools.nearestBench({ route: v.stage === 'nav' ? v.route : null, progress: v.progress }, v.here).say);
-    if (/\b(what do you see|describe|in front of me|camera|traffic light|signal)\b/.test(t)) {
-      d.openCamera(/\b(traffic light|signal|crossing light)\b/.test(t));
-      return close("I've opened the camera. Point it ahead.");
+    // The camera, by voice: no screen to manage, no button to press.
+    if (/\bstop watching\b/.test(t)) {
+      d.watchLight(false);
+      return close('Stopped watching the light.');
+    }
+    if (LIGHT.test(t)) {
+      speak('Checking the light. Point the phone across the road.');
+      try {
+        const r = await d.checkLight();
+        return ask(`${r.sentence} Shall I keep watching and tell you when it changes?`, { kind: 'watchLight' }, true);
+      } catch {
+        return close('The light check needs the camera and the camera service on this laptop. Neither answered.', true);
+      }
+    }
+    if (SCENE.test(t)) {
+      speak('Let me look.');
+      try {
+        return close(await d.describeScene(raw), true);
+      } catch {
+        return close("I can't look right now: the camera or the camera service isn't available.", true);
+      }
+    }
+    if (/\bopen (the )?camera\b/.test(t)) {
+      d.openCamera(false);
+      return close("I've opened the camera.");
     }
     const prof = PROFILES.find(([re]) => re.test(t));
     if (prof && (v.stage === 'place' || v.stage === 'nav') && v.sel) {
       d.setProfile(prof[1]);
-      return v.stage === 'place' ? ask(`${PROFILE_LABELS[prof[1]]} route. Say "start" when you're ready.`, { kind: 'start' }, true) : close('');
+      return v.stage === 'place' ? routeChosen(prof[1]) : close('');
     }
     if (v.stage === 'place' && YES.test(t)) return start();
 

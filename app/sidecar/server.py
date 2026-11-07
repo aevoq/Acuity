@@ -217,8 +217,9 @@ def transcribe_hinted(audio_bytes, hint):
     if audio.size == 0 or float(abs(audio).max()) < 1e-4:
         return ""
     audio = audio / float(abs(audio).max()) * 0.9
+    # One pass (beam 1): listening for the wake word has to be quick.
     segments, _ = state["whisper"].transcribe(
-        audio, language="en", beam_size=va.WHISPER_BEAM, temperature=0.0,
+        audio, language="en", beam_size=1, temperature=0.0,
         condition_on_previous_text=False, without_timestamps=True, initial_prompt=hint,
     )
     parts = [s.text.strip() for s in segments if not (s.no_speech_prob > 0.6 and s.avg_logprob < -1.0)]

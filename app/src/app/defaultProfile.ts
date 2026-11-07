@@ -9,7 +9,7 @@ export const DEFAULT_PROFILE: Profile = {
   speechRate: 1.1,
   verbosity: 'normal',
   directionStyle: 'landmarks',
-  reassuranceEveryMeters: 100,
+  reassuranceEveryMeters: 200, // less chatter: Acuity answers "how far" on request
   earcons: true,
   haptics: true,
   usesScreenReader: false,

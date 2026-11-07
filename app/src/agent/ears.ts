@@ -158,8 +158,12 @@ export function createEars({ onState, onUtterance }: EarsOptions) {
     const data = new Float32Array(e.inputBuffer.getChannelData(0));
     const rate = e.inputBuffer.sampleRate;
     const secs = data.length / rate;
-    // While the app talks (and just after), nothing counts.
-    if (isSpeaking() || performance.now() < quietUntil) {
+    const appTalking = isSpeaking() || performance.now() < quietUntil;
+    // Waiting for an answer: nothing counts while the app is still asking.
+    // During a journey ("wake"), the person can talk over the app: the browser's
+    // echo cancellation removes most of its voice, the bar is higher while it
+    // talks, and the app drops anything that matches what it just said.
+    if (appTalking && mode === 'open') {
       capture = null;
       ring = [];
       ringLen = 0;
@@ -168,8 +172,8 @@ export function createEars({ onState, onUtterance }: EarsOptions) {
     let sum = 0;
     for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
     const rms = Math.sqrt(sum / data.length);
-    const speech = rms > Math.max(0.02, floor * 4);
-    if (!speech && !capture) floor = floor * 0.95 + rms * 0.05; // learn the room's noise
+    const speech = appTalking ? rms > Math.max(0.035, floor * 6) : rms > Math.max(0.02, floor * 4);
+    if (!speech && !capture && !appTalking) floor = floor * 0.95 + rms * 0.05; // learn the room's noise (not the app's voice)
 
     if (capture) {
       capture.push(data);
