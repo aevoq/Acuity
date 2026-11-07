@@ -186,6 +186,12 @@ export interface Waypoint extends LatLng {
   /** Metres from the route start. */
   distanceAlong: number;
   milestone: Milestone | null;
+  /** For the screen: a Material Symbols icon name ("turn_left", "traffic", "flag"). */
+  icon?: string;
+  /** For the screen: short title ("Turn left", "Crossing with signals"). */
+  title?: string;
+  /** For the screen: the line under the title ("onto Thornton Street", "Tactile paving"). */
+  detail?: string;
 }
 
 export interface Route {

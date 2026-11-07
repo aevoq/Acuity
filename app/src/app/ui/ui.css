@@ -1,0 +1,1045 @@
+/* The redesign (Claude Design: "Offline Navigation Map"). Values are the
+   design's own: colours, radii, sizes, shadows. Cards float over a
+   full-screen map; one card at a time. */
+
+.shell {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
+/* ---------------------------------------------------------------- map */
+.map {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+  cursor: grab;
+  outline-offset: -4px;
+}
+.map svg {
+  display: block;
+}
+.map-pin {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  border-radius: 50%;
+  border: 3px solid #ffffff;
+  background: #c2185b;
+  color: #ffffff;
+  font: 700 17px 'Atkinson Hyperlegible', sans-serif;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+.map-dest {
+  position: absolute;
+  transform: translate(-50%, -92%);
+  pointer-events: none;
+}
+.map-dest .icon {
+  font-size: 56px;
+  color: #c2185b;
+  text-shadow: 0 0 3px #ffffff, 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+.map-me {
+  position: absolute;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+.map-me-halo {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(0, 80, 200, 0.14);
+  border: 1px solid rgba(0, 80, 200, 0.35);
+}
+.map-me-arrow {
+  position: absolute;
+  left: -24px;
+  top: -24px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #0050c8;
+  border: 4px solid #ffffff;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+  display: grid;
+  place-items: center;
+}
+.map-me-arrow .icon {
+  font-size: 30px;
+  color: #ffffff;
+}
+.map-me-dot {
+  position: absolute;
+  left: -13px;
+  top: -13px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #0050c8;
+  border: 4px solid #ffffff;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+}
+.attribution {
+  position: absolute;
+  right: 12px;
+  bottom: 8px;
+  font-size: 12px;
+  color: #4a4a4a;
+  pointer-events: none;
+}
+.hc .attribution {
+  color: #d0d0d0;
+}
+
+/* ---------------------------------------------------------------- right column */
+.right-col {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+.net-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 16px 0 12px;
+  border-radius: 999px;
+  border: 2px solid currentColor;
+  background: #ffffff;
+  font: 700 16px 'Atkinson Hyperlegible', sans-serif;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+}
+.net-pill.online {
+  color: #1b5e20;
+}
+.net-pill.offline {
+  color: #8a4b00;
+}
+.net-pill .icon {
+  font-size: 22px;
+}
+.zoom-box {
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  border-radius: 16px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);
+  overflow: hidden;
+}
+.zoom-box button {
+  width: 56px;
+  height: 56px;
+  border: none;
+  background: #ffffff;
+  color: #111111;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.zoom-box button + button {
+  border-top: 1px solid #d6d2ca;
+}
+.zoom-box button:hover,
+.square-btn:hover {
+  background: #f0eee9;
+}
+.zoom-box .icon {
+  font-size: 30px;
+}
+.square-btn {
+  width: 56px;
+  height: 56px;
+  border: none;
+  border-radius: 16px;
+  background: #ffffff;
+  color: #111111;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.square-btn .icon {
+  font-size: 28px;
+}
+.square-btn.following {
+  color: #0050c8;
+}
+.sos-btn {
+  width: 56px;
+  height: 56px;
+  border: none;
+  border-radius: 16px;
+  background: #c62828;
+  color: #ffffff;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  font: 700 14px 'Atkinson Hyperlegible', sans-serif;
+}
+.sos-btn:hover {
+  background: #a31f1f;
+}
+
+/* ---------------------------------------------------------------- left column */
+.left-col {
+  position: absolute;
+  left: 16px;
+  top: 16px;
+  bottom: 16px;
+  width: min(420px, calc(100% - 32px));
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  pointer-events: none;
+}
+.top-stack {
+  pointer-events: auto;
+  width: min(100%, calc(100vw - 112px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.bottom-stack {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* search */
+.searchbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #ffffff;
+  border-radius: 28px;
+  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.22);
+  padding: 4px 4px 4px 16px;
+  min-height: 60px;
+}
+.search-lead {
+  display: flex;
+}
+.search-lead .icon {
+  font-size: 28px;
+  color: #4a4a4a;
+}
+.search-go .icon {
+  display: none;
+  font-size: 28px;
+}
+.searchbar input {
+  flex: 1;
+  min-width: 0;
+  height: 52px;
+  border: none;
+  outline: none;
+  background: transparent;
+  font: 400 19px 'Atkinson Hyperlegible', sans-serif;
+  color: #111111;
+  padding: 0 6px;
+}
+.searchbar:focus-within {
+  outline: 4px solid #ffbf00;
+  outline-offset: 2px;
+}
+.round-btn {
+  width: 48px;
+  height: 48px;
+  flex: none;
+  border: none;
+  border-radius: 50%;
+  background: #f0eee9;
+  color: #111111;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.round-btn.clear {
+  background: transparent;
+  color: #4a4a4a;
+}
+.round-btn:hover {
+  background: #f0eee9;
+}
+.round-btn .icon {
+  font-size: 26px;
+}
+.search-go {
+  height: 52px;
+  padding: 0 20px;
+  border: none;
+  border-radius: 26px;
+  background: #0050c8;
+  color: #ffffff;
+  font: 700 17px 'Atkinson Hyperlegible', sans-serif;
+  cursor: pointer;
+}
+.search-go:hover {
+  background: #00409f;
+}
+
+.chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 2px 6px;
+  scrollbar-width: none;
+}
+.chip {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 48px;
+  padding: 0 16px 0 12px;
+  border-radius: 24px;
+  border: 2px solid #ffffff;
+  background: #ffffff;
+  color: #111111;
+  font: 700 16px 'Atkinson Hyperlegible', sans-serif;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.16);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.chip[aria-pressed='true'] {
+  background: #0050c8;
+  border-color: #0050c8;
+  color: #ffffff;
+}
+.chip .icon {
+  font-size: 22px;
+}
+
+/* walking banner */
+.banner {
+  background: #0b3d2e;
+  color: #ffffff;
+  border-radius: 24px;
+  padding: 18px 20px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.3);
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+.banner > .icon {
+  font-size: 64px;
+  font-variation-settings: 'FILL' 0, 'wght' 600, 'GRAD' 0, 'opsz' 24;
+}
+.banner-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.banner-dist {
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+.banner-title {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-wrap: pretty;
+}
+.banner-sub {
+  font-size: 18px;
+  color: #d7efe6;
+  text-wrap: pretty;
+}
+.banner.warn {
+  background: #7a1c1c;
+}
+.then-chip {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #082a20;
+  color: #ffffff;
+  border-radius: 16px;
+  padding: 8px 14px;
+  font-size: 16px;
+  font-weight: 700;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+}
+.then-chip .icon {
+  font-size: 22px;
+}
+
+/* ---------------------------------------------------------------- cards */
+.card {
+  background: #ffffff;
+  border-radius: 24px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.22);
+  padding: 18px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: auto;
+}
+.card.scroll {
+  max-height: min(62vh, 560px);
+}
+.card.tall {
+  max-height: min(66vh, 640px);
+}
+.card h1,
+.card h2 {
+  margin: 0;
+}
+.card :is(h1, h2):focus {
+  outline: none;
+}
+.card :is(h1, h2):focus-visible {
+  outline: 4px solid #ffbf00;
+}
+.grabber {
+  align-self: center;
+  width: 40px;
+  height: 5px;
+  border-radius: 3px;
+  background: #cfcac0;
+  flex: none;
+}
+.eyebrow {
+  font-size: 15px;
+  font-weight: 700;
+  color: #4a4a4a;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.muted {
+  color: #4a4a4a;
+}
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.card-head.top {
+  align-items: flex-start;
+}
+.card-head > .grow {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.card-head > .icon {
+  font-size: 28px;
+  color: #0050c8;
+}
+.place-title {
+  font-size: 26px;
+  line-height: 1.15;
+  text-wrap: pretty;
+}
+
+.ask-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.ask-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 8px 12px;
+  border-radius: 16px;
+  border: 2px solid #d6d2ca;
+  background: #f7f5f1;
+  color: #111111;
+  font: 700 16px 'Atkinson Hyperlegible', sans-serif;
+  text-align: left;
+  cursor: pointer;
+}
+.ask-btn:hover {
+  border-color: #0050c8;
+  background: #eef3fc;
+}
+.ask-btn .icon {
+  font-size: 26px;
+  color: #0050c8;
+}
+
+.answer-text {
+  margin: 0;
+  font-size: 23px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-wrap: pretty;
+}
+
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.rows.ruled {
+  border-top: 1px solid #e4e0d8;
+}
+.rows > li {
+  border-bottom: 1px solid #e4e0d8;
+}
+.rows.top-ruled > li {
+  border-bottom: none;
+  border-top: 1px solid #e4e0d8;
+}
+.row-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 60px;
+  padding: 8px 0;
+  border: none;
+  background: transparent;
+  color: #111111;
+  text-align: left;
+  font: 400 18px 'Atkinson Hyperlegible', sans-serif;
+  cursor: pointer;
+}
+.row-btn.tall {
+  min-height: 68px;
+  padding: 10px 0;
+  gap: 14px;
+}
+.row-btn:hover {
+  background: #f7f5f1;
+}
+.row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.row-main strong {
+  font-size: 18px;
+}
+.row-btn.tall .row-main strong {
+  font-size: 19px;
+}
+.row-meta {
+  font-size: 16px;
+  color: #4a4a4a;
+}
+.row-end {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  flex: none;
+}
+.row-end strong {
+  font-size: 19px;
+}
+.row-end span {
+  font-size: 14px;
+  color: #4a4a4a;
+}
+.row-btn > .icon {
+  font-size: 24px;
+  color: #4a4a4a;
+}
+.badge {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: 50%;
+  color: #ffffff;
+  display: grid;
+  place-items: center;
+}
+.badge .icon {
+  font-size: 22px;
+  color: #ffffff;
+}
+.badge.num {
+  width: 36px;
+  height: 36px;
+  background: #c2185b;
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.btn-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 52px;
+  padding: 0 18px;
+  border-radius: 26px;
+  font: 700 17px 'Atkinson Hyperlegible', sans-serif;
+  cursor: pointer;
+  text-decoration: none;
+}
+.btn .icon {
+  font-size: 24px;
+}
+.btn.primary {
+  border: none;
+  background: #0050c8;
+  color: #ffffff;
+  padding: 0 20px;
+}
+.btn.primary:hover {
+  background: #00409f;
+}
+.btn.primary:disabled {
+  background: #7f9fd1;
+  cursor: not-allowed;
+}
+.btn.outline {
+  border: 2px solid #0050c8;
+  background: #ffffff;
+  color: #0050c8;
+}
+.btn.danger {
+  border: none;
+  background: #c62828;
+  color: #ffffff;
+  padding: 0 20px;
+  font-size: 18px;
+}
+.btn.danger:hover {
+  background: #a31f1f;
+}
+.btn.big {
+  min-height: 60px;
+  border-radius: 30px;
+  font-size: 21px;
+  padding: 0 22px;
+  box-shadow: 0 2px 8px rgba(0, 80, 200, 0.35);
+}
+.btn.big .icon {
+  font-size: 30px;
+}
+.btn.big.outline {
+  font-size: 18px;
+  box-shadow: none;
+}
+.btn.big.outline .icon {
+  font-size: 26px;
+}
+.btn.grow {
+  flex: 1 1 180px;
+}
+
+.route-min {
+  font-size: 34px;
+  font-weight: 700;
+  color: #0b3d2e;
+}
+.route-len {
+  font-size: 19px;
+  font-weight: 700;
+}
+.route-sum {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.route-sum .line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.small {
+  font-size: 16px;
+  color: #4a4a4a;
+  text-wrap: pretty;
+}
+.fine {
+  margin: 0;
+  font-size: 14px;
+  color: #4a4a4a;
+  text-wrap: pretty;
+}
+.warn-text {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #8a4b00;
+}
+
+/* Route type: real radios shown as chips, so arrow keys work. */
+.choice-set {
+  border: none;
+  margin: 0;
+  padding: 0;
+}
+.choice-set legend {
+  padding: 0;
+  margin-bottom: 8px;
+  font-size: 16px;
+  font-weight: 700;
+  color: #4a4a4a;
+}
+.choice-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.choice {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 48px;
+  padding: 0 14px 0 10px;
+  border-radius: 24px;
+  border: 2px solid #8a8a8a;
+  background: #ffffff;
+  color: #111111;
+  font: 700 16px 'Atkinson Hyperlegible', sans-serif;
+  cursor: pointer;
+}
+.choice input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  margin: 0;
+  cursor: pointer;
+}
+.choice:has(input:checked) {
+  background: #0b3d2e;
+  border-color: #0b3d2e;
+  color: #ffffff;
+}
+.choice:has(input:focus-visible) {
+  outline: 4px solid #ffbf00;
+  outline-offset: 2px;
+}
+.choice .icon {
+  font-size: 22px;
+}
+.choice.dark:has(input:checked) {
+  background: #111111;
+  border-color: #111111;
+}
+.choice.small-chip {
+  min-width: 52px;
+  min-height: 44px;
+  justify-content: center;
+  padding: 0 12px;
+  font-size: 15px;
+  border-radius: 22px;
+}
+
+.steps-list > li {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid #e4e0d8;
+}
+.step-icon {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  border-radius: 12px;
+  background: #eef3fc;
+  color: #0050c8;
+  display: grid;
+  place-items: center;
+}
+.step-icon .icon {
+  font-size: 28px;
+}
+.step-at {
+  font-size: 16px;
+  font-weight: 700;
+  color: #4a4a4a;
+  flex: none;
+}
+
+/* walking card */
+.nav-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.nav-min {
+  font-size: 30px;
+  font-weight: 700;
+  color: #0b3d2e;
+  line-height: 1.1;
+}
+.nav-meta {
+  font-size: 17px;
+  color: #333333;
+}
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 68px;
+  border-radius: 16px;
+  border: 2px solid #d6d2ca;
+  background: #f7f5f1;
+  color: #111111;
+  font: 700 15px 'Atkinson Hyperlegible', sans-serif;
+  cursor: pointer;
+}
+.tile:hover {
+  border-color: #0050c8;
+}
+.tile .icon {
+  font-size: 28px;
+  color: #0050c8;
+}
+.demo-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 15px;
+  color: #4a4a4a;
+}
+.demo-row > strong {
+  font-weight: 700;
+}
+.demo-btn {
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 22px;
+  border: 2px solid #8a8a8a;
+  background: #ffffff;
+  color: #111111;
+  font: 700 15px 'Atkinson Hyperlegible', sans-serif;
+  cursor: pointer;
+}
+.demo-btn[aria-pressed='true'] {
+  background: #111111;
+  border-color: #111111;
+  color: #ffffff;
+}
+
+/* forms (bus ride setup, settings) */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 16px;
+  font-weight: 700;
+  color: #4a4a4a;
+}
+.field select,
+.field input[type='range'] {
+  min-height: 52px;
+  width: 100%;
+  font: 400 18px 'Atkinson Hyperlegible', sans-serif;
+  color: #111111;
+}
+.field select {
+  padding: 0 12px;
+  border-radius: 16px;
+  border: 2px solid #8a8a8a;
+  background: #ffffff;
+}
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 52px;
+  font-size: 18px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.switch-row small {
+  display: block;
+  font-weight: 400;
+  font-size: 15px;
+  color: #4a4a4a;
+}
+.switch-row input {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  accent-color: #0050c8;
+}
+
+.arrived-mark {
+  width: 56px;
+  height: 56px;
+  flex: none;
+  border-radius: 50%;
+  background: #1b5e20;
+  color: #ffffff;
+  display: grid;
+  place-items: center;
+}
+.arrived-mark .icon {
+  font-size: 34px;
+}
+
+/* ---------------------------------------------------------------- dialogs */
+dialog.sheet {
+  width: min(440px, calc(100% - 32px));
+  max-height: calc(100% - 32px);
+  border: none;
+  border-radius: 24px;
+  padding: 22px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+  color: #111111;
+}
+dialog.sheet::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+dialog.sheet.help {
+  border: 4px solid #c62828;
+}
+.sheet-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.sheet-body h2 {
+  margin: 0;
+  font-size: 28px;
+}
+.sheet-body p {
+  margin: 0;
+  font-size: 18px;
+  text-wrap: pretty;
+}
+.help-call {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 60px;
+  border-radius: 30px;
+  background: #c62828;
+  color: #ffffff;
+  font-size: 21px;
+  font-weight: 700;
+  text-decoration: none;
+}
+.help-call:hover {
+  color: #ffffff;
+  background: #a31f1f;
+}
+.help-sms {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 60px;
+  border-radius: 30px;
+  border: 2px solid #111111;
+  background: #ffffff;
+  color: #111111;
+  font-size: 20px;
+  font-weight: 700;
+  text-decoration: none;
+}
+.help-call .icon,
+.help-sms .icon {
+  font-size: 28px;
+}
+.sheet-close {
+  min-height: 52px;
+  border-radius: 26px;
+  border: 2px solid #8a8a8a;
+  background: #f7f5f1;
+  color: #111111;
+  font: 700 18px 'Atkinson Hyperlegible', sans-serif;
+  cursor: pointer;
+}
+
+/* Narrow screens: the cards span the width, under the right-hand column.
+   Cap their height so they always stop below it: SOS, zoom and the
+   online/offline pill must never be covered. The right column is ~376px
+   tall at text size 1 and scales with --ui-zoom; the cards are zoomed too,
+   hence the division. */
+@media (max-width: 879px) {
+  .bottom-stack .card,
+  .bottom-stack .card.scroll,
+  .bottom-stack .card.tall {
+    max-height: max(180px, calc((100dvh - 44px) / var(--ui-zoom, 1) - 376px));
+  }
+}
+
+/* Narrow screens: the online/offline pill shows its icon only (its spoken
+   label is unchanged) so the right column is one button wide, and the search
+   bar / banner stop before it at every text size. */
+@media (max-width: 879px) {
+  .net-pill {
+    width: 56px;
+    height: 56px;
+    padding: 0;
+    justify-content: center;
+    border-radius: 16px;
+  }
+  .net-pill > span:not(.icon) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .net-pill .icon {
+    font-size: 28px;
+  }
+  .top-stack {
+    width: calc((100vw - 44px) / var(--ui-zoom, 1) - 56px);
+  }
+}
+
+/* Narrow screens: give the search field the room: no decorative magnifier,
+   and Search becomes a round icon button (still named "Search"). */
+@media (max-width: 879px) {
+  .search-lead {
+    display: none;
+  }
+  .searchbar {
+    padding-left: 12px;
+  }
+  .search-go {
+    width: 52px;
+    flex: none;
+    padding: 0;
+    display: grid;
+    place-items: center;
+  }
+  .search-go-text {
+    display: none;
+  }
+  .search-go .icon {
+    display: block;
+  }
+}

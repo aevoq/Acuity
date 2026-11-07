@@ -24,6 +24,19 @@ const ARRIVE_TRIGGER = 10;
 const COMPASS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
 export const compassWord = (deg: number) => COMPASS[Math.round(deg / 45) % 8];
 
+/** Material Symbols icon for a turn angle (degrees, positive = right). */
+export function turnIcon(t: number): string {
+  const a = Math.abs(t);
+  const side = t > 0 ? 'right' : 'left';
+  if (a < 30) return 'straight';
+  if (a < 60) return `turn_slight_${side}`;
+  if (a < 135) return `turn_${side}`;
+  if (a < 165) return `turn_sharp_${side}`;
+  return 'u_turn_left';
+}
+
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 function turnWords(t: number): string | null {
   const a = Math.abs(t);
   const side = t > 0 ? 'right' : 'left';
@@ -34,7 +47,7 @@ function turnWords(t: number): string | null {
   return 'turn back on yourself';
 }
 
-export function describeCrossing(c: CrossingInfo): { text: string; milestone: Milestone } {
+export function describeCrossing(c: CrossingInfo): { text: string; milestone: Milestone; icon: string; title: string; detail: string } {
   const kind =
     c.type === 'traffic_signals' ? 'a crossing with traffic signals'
     : c.type === 'zebra' ? 'a zebra crossing'
@@ -47,7 +60,14 @@ export function describeCrossing(c: CrossingInfo): { text: string; milestone: Mi
   if (c.kerb === 'raised') extras.push('a raised kerb');
   const text = `In about ${CROSSING_TRIGGER} metres, ${kind}${extras.length ? `, with ${extras.join(' and ')}` : ''}.`;
   const accessible = c.type === 'traffic_signals' || c.tactilePaving === true;
-  return { text, milestone: accessible ? 'crossingAccessible' : 'crossingAhead' };
+  const title =
+    c.type === 'traffic_signals' ? 'Crossing with signals'
+    : c.type === 'zebra' ? 'Zebra crossing'
+    : c.type === 'marked' ? 'Marked crossing'
+    : c.type === 'uncontrolled' ? 'Crossing, no signals'
+    : 'Road crossing';
+  const detail = extras.length ? cap(extras.join(', ').replace(/\ba /g, '')) : 'No tactile paving recorded';
+  return { text, milestone: accessible ? 'crossingAccessible' : 'crossingAhead', icon: c.type === 'traffic_signals' ? 'traffic' : 'directions_walk', title, detail };
 }
 
 /** Cumulative distance at each vertex of a polyline. */
@@ -88,8 +108,9 @@ export function buildWaypoints(
   const total = cum[cum.length - 1];
   const wps: Waypoint[] = [];
   let n = 0;
-  const add = (kind: Waypoint['kind'], at: LatLng, along: number, triggerRadius: number, instruction: string, milestone: Milestone | null) =>
-    wps.push({ id: `wp${n++}`, kind, lat: at.lat, lng: at.lng, triggerRadius, instruction, distanceAlong: Math.round(along), milestone });
+  type Display = { icon: string; title: string; detail: string };
+  const add = (kind: Waypoint['kind'], at: LatLng, along: number, triggerRadius: number, instruction: string, milestone: Milestone | null, show: Display) =>
+    wps.push({ id: `wp${n++}`, kind, lat: at.lat, lng: at.lng, triggerRadius, instruction, distanceAlong: Math.round(along), milestone, ...show });
 
   // --- start
   // Only name the street if the route actually starts on it (within ~30 m).
@@ -110,6 +131,7 @@ export function buildWaypoints(
     `Route to ${route.destinationName}: ${Math.round(total / 10) * 10} metres, about ${mins} minute${mins === 1 ? '' : 's'}.` +
       (head ? ` Head ${head}${firstStreet ? ` along ${firstStreet}` : ''}.` : ''),
     null,
+    { icon: 'straight', title: head ? `Head ${head}` : 'Start', detail: firstStreet ? `on ${firstStreet}` : 'along the path' },
   );
 
   // --- turns and crossings, junction by junction
@@ -128,8 +150,8 @@ export function buildWaypoints(
     if (c) {
       const at = toNode.crossing ? toNode : pointAlong(path, Math.max(0, along - edge.length / 2)).point;
       const where = toNode.crossing ? along : Math.max(0, along - edge.length / 2);
-      const { text, milestone } = describeCrossing(c);
-      add('crossing', at, where, CROSSING_TRIGGER, text, milestone);
+      const { text, milestone, icon, title, detail } = describeCrossing(c);
+      add('crossing', at, where, CROSSING_TRIGGER, text, milestone, { icon, title, detail });
     }
 
     // Turn onto the next edge?
@@ -151,10 +173,15 @@ export function buildWaypoints(
     // At most two turns per sentence; a third starts a new waypoint.
     if (prev && prev.kind === 'turn' && along - lastTurnAlong < 12 && !prev.instruction.includes('then immediately')) {
       prev.instruction = prev.instruction.replace(/\.$/, `, then immediately ${verb.replace(/^turn /, '')}${onto}.`);
+      prev.detail = `then immediately ${verb.replace(/^turn /, '')}${onto}`;
       lastTurnAlong = along;
       continue;
     }
-    add('turn', toNode, along, TURN_TRIGGER, `In about ${TURN_TRIGGER} metres, ${verb}${onto}${near}.`, 'turnAhead');
+    add('turn', toNode, along, TURN_TRIGGER, `In about ${TURN_TRIGGER} metres, ${verb}${onto}${near}.`, 'turnAhead', {
+      icon: turnIcon(t),
+      title: cap(verb),
+      detail: onto ? onto.trim() + (landmark ? `, at ${landmark.name}` : '') : landmark ? `at ${landmark.name}` : 'onto the footpath',
+    });
     lastTurnAlong = along;
   }
 
@@ -168,13 +195,17 @@ export function buildWaypoints(
       .sort((a, b) => a.along - b.along);
     for (const c of candidates) {
       if (c.along - lastBench < 150) continue;
-      add('bench', c.b, c.along, BENCH_TRIGGER, 'A bench nearby, if you want to rest.', 'benchNearby');
+      add('bench', c.b, c.along, BENCH_TRIGGER, 'A bench nearby, if you want to rest.', 'benchNearby', { icon: 'chair', title: 'Bench', detail: 'A place to rest' });
       lastBench = c.along;
     }
   }
 
   // --- arrival
-  add('arrive', path[path.length - 1], total, ARRIVE_TRIGGER, `You have arrived at ${route.destinationName}.`, 'arrived');
+  add('arrive', path[path.length - 1], total, ARRIVE_TRIGGER, `You have arrived at ${route.destinationName}.`, 'arrived', {
+    icon: 'flag',
+    title: `Arrive at ${route.destinationName}`,
+    detail: 'Destination',
+  });
 
   return wps.sort((a, b) => a.distanceAlong - b.distanceAlong);
 }

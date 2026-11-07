@@ -1,430 +1,661 @@
-// The page shell. Owns layout, the online/offline switch, the live region,
-// the map, and wires the offline core together:
-//   search a place → route it with the chosen profile → walk it (simulated
-//   or real GPS) → guidance speaks each waypoint.
-// Feature folders (voice, agent, vision) plug in here.
+// The app shell, after the Claude Design redesign: a full-screen offline map
+// with floating cards, one stage at a time:
+//   explore → (answer) → results → place → nav → arrived,  and place → ride (bus).
+// The engine underneath is unchanged: router + guidance (src/nav), simulated
+// walk / GPS (src/sim, src/position), tools (src/places), TfL (src/transit),
+// Gemini (src/net).
 //
-// Accessibility basics this shell guarantees:
-//  - one <h1>, landmarks (header / main), a skip link;
-//  - every prompt is mirrored into a polite live region, so screen reader
-//    users hear it in their own voice (principle 6);
-//  - controls are real buttons and radios, 48 px or larger, keyboard reachable.
+// Accessibility the shell guarantees:
+//  - every prompt goes to a polite live region (re-announced even when the
+//    text repeats), and is spoken aloud only when "Speak prompts" is on and
+//    "I use a screen reader" is off, so it never talks over VoiceOver/NVDA;
+//  - when the stage changes, focus moves to the new card's heading;
+//  - Help and Settings are native modal dialogs (focus trap, Escape).
 
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import type { Intent, LatLng, Milestone, Place, Position, PositionSource, Route, RouteProfileId, SpeakRequest, ToolResult } from '../contracts';
-import { createTools } from '../places/tools';
-import { AskPanel } from './AskPanel';
-import { BusPanel } from './BusPanel';
-import { HelpPanel } from './HelpPanel';
-import { runIntent } from './runIntent';
-import { MapView } from '../mapview/MapView';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { BusRoute, Intent, Position, PositionSource, Route, RouteProfileId, SpeakRequest, ToolResult } from '../contracts';
+import { distance } from '../geo/geo';
+import { MapCanvas, mapBackground, type MapCanvasHandle, type MapPin } from '../mapview/MapCanvas';
 import { PROFILE_LABELS } from '../nav/costs';
 import { createGuidance, type Guidance, type GuidanceState } from '../nav/guidance';
 import { createRouter } from '../nav/router';
 import { connectivity } from '../net/connectivity';
+import { geminiPickTool } from '../net/gemini';
 import { useNetworkMode } from '../net/useConnectivity';
 import { loadPack, type PackIndex } from '../pack/pack';
-import { findPlaces, type PlaceHit } from '../places/search';
+import { findPlaces } from '../places/search';
+import { createTools } from '../places/tools';
 import { createGpsSource, gpsAvailable } from '../position/gps';
 import { createSimWalk, type SimWalk } from '../sim/simWalk';
+import { busArrivals, routesAt } from '../transit/arrivals';
+import { createBusRide, planBusRide, type BusRidePlan, type BusRideState } from '../transit/busRide';
 import { DEFAULT_PROFILE } from './defaultProfile';
+import { quickMatch } from './quickMatch';
+import { runIntent } from './runIntent';
+import { useSettings } from './settings';
 import { speakFallback } from './speakFallback';
-import './app.css';
+import { AnswerCard, ArrivedCard, ExploreCard, PlaceCard, ResultsCard, type BusSetup } from './ui/Cards';
+import { CategoryChips, RightControls, SearchBar, type CATEGORIES } from './ui/Controls';
+import { HelpDialog, SettingsDialog } from './ui/Dialogs';
+import { fmtDist, placeTarget, stopTarget, targetName, walkMinutes, type Answer, type ResultItem, type Target } from './ui/model';
+import { NavBanner, RideCard, WalkCard } from './ui/Walk';
+import './ui/ui.css';
 
 /** Where the user "stands" before a walk: Marshgate, UCL East. */
-const VENUE: Position = { lat: 51.537542, lng: -0.0119821, accuracy: 5, heading: null, speed: null, timestamp: 0, source: 'simulated' };
+const VENUE: Position = { lat: 51.537542, lng: -0.0119821, accuracy: 6, heading: null, speed: null, timestamp: 0, source: 'simulated' };
+const BUS_SPEED = 6; // m/s for the simulated bus
 
-const MILESTONE_LABEL: Record<Milestone, string> = {
-  turnAhead: 'Turn',
-  crossingAhead: 'Crossing',
-  crossingAccessible: 'Crossing (signals or tactile)',
-  benchNearby: 'Bench',
-  busStopPassed: 'Stop passed',
-  yourStopNext: 'Your stop next',
-  offRoute: 'Off route',
-  arrived: 'Arrived',
-};
-
-const PROFILES = Object.keys(PROFILE_LABELS) as RouteProfileId[];
-const SPEEDS = [1, 4, 10];
-
-interface Prompt {
-  id: number;
-  text: string;
-  milestone?: Milestone;
-}
+type Mode = 'explore' | 'results' | 'place' | 'nav' | 'arrived' | 'ride';
+const HEADING_FOR: Record<Mode, string> = { explore: 'here-h', results: 'res-h', place: 'place-h', nav: 'walk-h', arrived: 'arr-h', ride: 'ride-h' };
+/** Intents that are questions (answer card), as opposed to place searches. */
+const QUESTIONS = new Set(['aroundMe', 'leftRight', 'whereAmI', 'nextStep', 'repeat', 'help', 'nearestBusStop', 'busArrivals']);
 
 export function App() {
-  const mode = useNetworkMode();
+  const net = useNetworkMode();
+  const [settings, updateSettings] = useSettings();
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+
   const [index, setIndex] = useState<PackIndex | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [profile, setProfile] = useState(DEFAULT_PROFILE);
   const router = useMemo(() => (index ? createRouter(index) : null), [index]);
   const tools = useMemo(() => (index ? createTools({ index, router }) : null), [index, router]);
-  const [helpOpen, setHelpOpen] = useState(false);
-  const [busLine, setBusLine] = useState<LatLng[] | null>(null);
+  const mapRef = useRef<MapCanvasHandle>(null);
 
+  const [mode, setMode] = useState<Mode>('explore');
   const [query, setQuery] = useState('');
-  const [hits, setHits] = useState<PlaceHit[] | null>(null);
-  const [destination, setDestination] = useState<Place | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [chip, setChip] = useState<string | null>(null);
+  const [results, setResults] = useState<ResultItem[]>([]);
+  const [resultsTitle, setResultsTitle] = useState('');
+  const [answer, setAnswer] = useState<Answer | null>(null);
+  const [sel, setSel] = useState<Target | null>(null);
+  const [profileId, setProfileId] = useState<RouteProfileId>(DEFAULT_PROFILE.routeProfile);
   const [route, setRoute] = useState<Route | null>(null);
-
-  const [position, setPosition] = useState<Position>(VENUE);
+  const [noRouteText, setNoRouteText] = useState<string | null>(null);
+  const [showSteps, setShowSteps] = useState(false);
+  const [me, setMe] = useState<Position>(VENUE);
+  const [follow, setFollow] = useState(true);
   const [gstate, setGstate] = useState<GuidanceState | null>(null);
-  const [walking, setWalking] = useState<'idle' | 'running' | 'paused'>('idle');
-  const [sourceKind, setSourceKind] = useState<'simulated' | 'gps'>('simulated');
+  const [paused, setPaused] = useState(false);
   const [speed, setSpeed] = useState(4);
-  const [prompts, setPrompts] = useState<Prompt[]>([]);
-  const [announcement, setAnnouncement] = useState('');
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [announce, setAnnounce] = useState('');
+  // bus
+  const [arrivals, setArrivals] = useState<string | null>(null);
+  const [loadingArrivals, setLoadingArrivals] = useState(false);
+  const [rideRouteId, setRideRouteId] = useState<string | null>(null);
+  const [alightId, setAlightId] = useState<string | null>(null);
+  const [ride, setRide] = useState<BusRideState | null>(null);
+  const [ridePlan, setRidePlan] = useState<BusRidePlan | null>(null);
 
   const sourceRef = useRef<PositionSource | null>(null);
   const guidanceRef = useRef<Guidance | null>(null);
-  const unsubPosRef = useRef<(() => void) | null>(null);
-  const promptId = useRef(0);
+  const rideRef = useRef<ReturnType<typeof createBusRide> | null>(null);
+  const unsubRef = useRef<(() => void) | null>(null);
+  const lastSaid = useRef<string | null>(null);
+  const meRef = useRef(me);
+  meRef.current = me;
 
-  // ---- output: every prompt goes to the screen, the live region and speech
-  const speak = (req: SpeakRequest) => {
-    setPrompts((p) => [{ id: promptId.current++, text: req.text, milestone: req.milestone }, ...p].slice(0, 8));
-    setAnnouncement(req.text);
-    speakFallback(req, profile);
-  };
+  // ---------------------------------------------------------------- output
+  /** Every prompt: live region (always) + voice (when wanted). Stable, so guidance can hold it. */
+  const speak = useCallback((req: SpeakRequest | string) => {
+    const r = typeof req === 'string' ? { text: req } : req;
+    if (!r.text) return;
+    lastSaid.current = r.text;
+    // Clear first, so the same words twice in a row are announced twice.
+    setAnnounce('');
+    requestAnimationFrame(() => setAnnounce(r.text));
+    const s = settingsRef.current;
+    speakFallback(r, { ...DEFAULT_PROFILE, speechRate: s.speechRate, usesScreenReader: s.screenReader || !s.voice });
+  }, []);
 
   useEffect(() => {
     loadPack()
       .then((ix) => {
         setIndex(ix);
-        setAnnouncement(`Area map loaded: ${ix.pack.name}. ${ix.pack.places.length} places.`);
+        setAnnounce(`Area map loaded: ${ix.pack.name}. ${ix.pack.places.length} places. Map saved ${ix.ageDays() === 0 ? 'today' : `${ix.ageDays()} days ago`}.`);
       })
       .catch((e: Error) => setError(e.message));
   }, []);
+  useEffect(() => {
+    if (index) requestAnimationFrame(() => mapRef.current?.flyTo(meRef.current, 0.8, 900));
+  }, [index]);
 
   useEffect(
-    () =>
-      connectivity.subscribe((m) =>
-        setAnnouncement(m === 'offline' ? 'You are offline. Navigation and questions still work.' : 'Back online. Live features are available.'),
-      ),
-    [],
+    () => connectivity.subscribe((m) => speak(m === 'offline' ? 'You are offline. Navigation and questions still work.' : 'Back online. Live features are available.')),
+    [speak],
   );
 
-  // ---- search and route
-  const search = (e?: FormEvent) => {
-    e?.preventDefault();
-    if (!index || !router || !query.trim()) return;
-    const found = findPlaces(index, router, position, query, 5);
-    setHits(found);
-    if (!found.length) speak({ text: `I couldn't find "${query}" in the downloaded area.` });
-    else {
-      const h = found[0];
-      speak({ text: `${found.length} result${found.length === 1 ? '' : 's'}. Nearest: ${h.place.name}, about ${Math.round((h.walkMeters ?? h.straightMeters) / 10) * 10} metres walk.` });
+  // Move focus to the new card's heading when the stage changes (not on first load).
+  const firstFocus = useRef(true);
+  useEffect(() => {
+    if (firstFocus.current) {
+      firstFocus.current = false;
+      return;
     }
-  };
+    const id = answer ? 'ans-h' : HEADING_FOR[mode];
+    requestAnimationFrame(() => document.getElementById(id)?.focus());
+  }, [mode, answer, resultsTitle]);
 
-  const planRoute = (dest: Place, prof: RouteProfileId, from: Position = position) => {
+  // Real GPS while not walking, when the setting is on.
+  useEffect(() => {
+    if (!settings.realGps || mode === 'nav' || mode === 'ride') return;
+    const gps = createGpsSource();
+    const off = gps.subscribe(setMe);
+    gps.start();
+    return () => {
+      off();
+      gps.stop();
+    };
+  }, [settings.realGps, mode]);
+
+  // ---------------------------------------------------------------- walking + riding lifecycle
+  const stopMoving = () => {
+    guidanceRef.current?.stop();
+    rideRef.current?.stop();
+    sourceRef.current?.stop();
+    unsubRef.current?.();
+    guidanceRef.current = rideRef.current = sourceRef.current = unsubRef.current = null;
+    setGstate(null);
+    setRide(null);
+    setRidePlan(null);
+    setPaused(false);
+  };
+  useEffect(() => () => stopMoving(), []);
+  const sim = () => (sourceRef.current?.kind === 'simulated' ? (sourceRef.current as SimWalk) : null);
+
+  useEffect(() => {
+    if (gstate?.arrived) setMode('arrived');
+  }, [gstate?.arrived]);
+
+  // ---------------------------------------------------------------- routes
+  const plan = (t: Target, prof: RouteProfileId, from: Position = meRef.current): Route | null => {
     if (!router) return null;
-    const r = router.route(from, dest, prof, dest.name);
-    if (!r) {
-      speak({ text: `There is no ${PROFILE_LABELS[prof].toLowerCase()} route to ${dest.name} in the downloaded area.` });
-      return null;
-    }
+    const r = router.route(from, t, prof, targetName(t));
     setRoute(r);
+    setNoRouteText(r ? null : `No ${PROFILE_LABELS[prof].toLowerCase()} route to ${targetName(t)} in the downloaded area.`);
     return r;
   };
 
-  const choose = (dest: Place) => {
-    stopWalk();
-    setDestination(dest);
-    const r = planRoute(dest, profile.routeProfile);
-    if (r) speak({ text: `${r.waypoints[0]?.instruction ?? ''}${r.tradeOff ? ` ${r.tradeOff}` : ''}` });
+  const routeSentence = (r: Route) =>
+    `${r.destinationName}. ${walkMinutes(r.lengthMeters)} minute walk, ${Math.round(r.lengthMeters / 10) * 10} metres, ${r.crossings} crossing${r.crossings === 1 ? '' : 's'}.${r.tradeOff ? ` ${r.tradeOff}` : ''}`;
+
+  const choose = (t: Target) => {
+    stopMoving();
+    setSel(t);
+    setAnswer(null);
+    setShowSteps(false);
+    setArrivals(null);
+    setRideRouteId(null);
+    setAlightId(null);
+    setFollow(false);
+    setMode('place');
+    const r = plan(t, profileId);
+    if (r) {
+      mapRef.current?.fitPoints(r.path, 30);
+      speak(routeSentence(r));
+    } else {
+      mapRef.current?.flyTo(t, 0.6);
+      speak(`No ${PROFILE_LABELS[profileId].toLowerCase()} route to ${targetName(t)} in the downloaded area.`);
+    }
   };
 
-  const changeProfile = (prof: RouteProfileId) => {
-    setProfile((p) => ({ ...p, routeProfile: prof }));
-    if (!destination) return;
-    stopWalk();
-    const r = planRoute(destination, prof);
-    if (r) speak({ text: r.tradeOff ?? `${PROFILE_LABELS[prof]} route: ${r.lengthMeters} metres, ${r.crossings} crossings.` });
+  const changeProfile = (p: RouteProfileId) => {
+    setProfileId(p);
+    if (!sel) return;
+    const r = plan(sel, p);
+    if (r) {
+      mapRef.current?.fitPoints(r.path, 30);
+      speak(r.tradeOff ?? `${PROFILE_LABELS[p]} route: ${walkMinutes(r.lengthMeters)} minutes, ${r.crossings} crossings.`);
+    }
   };
 
-  // ---- walking
-  function stopWalk() {
-    guidanceRef.current?.stop();
-    sourceRef.current?.stop();
-    unsubPosRef.current?.();
-    guidanceRef.current = null;
-    sourceRef.current = null;
-    unsubPosRef.current = null;
-    setWalking('idle');
-    setGstate(null);
-  }
+  // ---------------------------------------------------------------- search
+  const walkTo = (t: Target) => router?.walkingDistance(meRef.current, t) ?? distance(meRef.current, t) * 1.3;
 
-  const startWalk = (r: Route | null = route) => {
-    if (!r) return;
-    stopWalk();
-    const src: PositionSource = sourceKind === 'gps' ? createGpsSource() : createSimWalk(r.path, { speedFactor: speed });
-    const g = createGuidance({
-      route: r,
-      source: src,
-      onSpeak: speak,
-      onState: setGstate,
-      reassuranceEveryMeters: profile.reassuranceEveryMeters,
+  /** Show results for a place query. Returns how many were found. */
+  const search = (q: string, label?: string, quietIfEmpty = false): number => {
+    if (!index) return 0;
+    let items: ResultItem[];
+    if (/^bus ?stops?$/i.test(q.trim())) {
+      items = index
+        .busStopsNear(meRef.current, 800, 12)
+        .map(({ stop }) => ({ target: stopTarget(stop), walk: 0 }))
+        .map((it) => ({ ...it, walk: walkTo(it.target) }))
+        .sort((a, b) => a.walk - b.walk)
+        .slice(0, 8);
+    } else {
+      items = findPlaces(index, router, meRef.current, q, 8, 8).map((h) => ({ target: placeTarget(h.place), walk: h.walkMeters ?? h.straightMeters * 1.3 }));
+    }
+    if (!items.length && quietIfEmpty) return 0;
+    stopMoving();
+    setResults(items);
+    setResultsTitle(items.length ? `${label ?? `“${q}”`} nearby` : 'No results');
+    setAnswer(null);
+    setSel(null);
+    setRoute(null);
+    setFollow(false);
+    setMode('results');
+    if (!items.length) speak(`I couldn't find "${q}" in the downloaded area.`);
+    else {
+      const h = items[0];
+      speak(`${items.length} result${items.length === 1 ? '' : 's'}. Nearest: ${targetName(h.target)}, about ${Math.round(h.walk / 10) * 10} metres walk.`);
+      mapRef.current?.fitPoints([meRef.current, ...items.slice(0, 5).map((i) => i.target)]);
+    }
+    return items.length;
+  };
+
+  const pickChip = (c: (typeof CATEGORIES)[number]) => {
+    setChip(c.label);
+    setQuery(c.label);
+    search(c.query, c.label);
+  };
+
+  // ---------------------------------------------------------------- questions
+  const navigateTo = (q: string): ToolResult => {
+    if (!index) return { ok: false, intent: 'navigateTo', say: 'The map is still loading.' };
+    const hits = findPlaces(index, router, meRef.current, q, 1);
+    if (!hits.length) return { ok: false, intent: 'navigateTo', say: `I couldn't find ${q} in the downloaded area.` };
+    choose(placeTarget(hits[0].place));
+    return { ok: true, intent: 'navigateTo', say: '' };
+  };
+
+  const answerFrom = (intent: Intent, res: ToolResult, asked: string): Answer => {
+    const items: Answer['items'] = [];
+    const data = res.data as unknown;
+    if (Array.isArray(data)) {
+      for (const d of data as Array<Record<string, unknown>>) {
+        if (d.place) items.push({ target: placeTarget(d.place as never), meters: Number(d.walkMeters ?? d.meters ?? d.straightMeters ?? 0) });
+        else if (d.stop) items.push({ target: stopTarget(d.stop as never), meters: Number(d.meters ?? 0) });
+      }
+    } else if (data && typeof data === 'object' && (data as { landmark?: unknown }).landmark) {
+      const lm = (data as { landmark: never }).landmark;
+      items.push({ target: placeTarget(lm), meters: distance(meRef.current, lm) });
+    }
+    const icon: Record<string, string> = {
+      whereAmI: 'person_pin_circle', aroundMe: 'explore', leftRight: 'explore', nearestBusStop: 'directions_bus', busArrivals: 'schedule',
+      nearest: 'place', nextStep: 'record_voice_over', repeat: 'replay', unknown: 'warning',
+    };
+    const goTo = intent.name === 'nearestBusStop' || intent.name === 'nearest' ? items[0]?.target : undefined;
+    return { q: asked, icon: icon[intent.name] ?? 'explore', text: res.say, items: items.slice(0, 5), goTo };
+  };
+
+  const ask = async (intent: Intent, asked: string) => {
+    if (!index || !tools) return;
+    const res = await runIntent(intent, {
+      index,
+      tools,
+      here: sourceRef.current?.current() ?? meRef.current,
+      guidance: guidanceRef.current,
+      lastSaid: lastSaid.current,
+      navigateTo,
+      openHelp: () => setHelpOpen(true),
     });
-    unsubPosRef.current = src.subscribe(setPosition);
+    if (intent.name === 'navigateTo' || intent.name === 'help') {
+      if (res.say) speak(res.say);
+      return;
+    }
+    const a = answerFrom(intent, res, asked);
+    stopMoving();
+    setAnswer(a);
+    setMode('explore');
+    setResults([]);
+    speak({ text: res.say, milestone: res.milestone });
+    if (a.items.length) mapRef.current?.fitPoints([meRef.current, ...a.items.map((i) => i.target)]);
+  };
+
+  const onAskButton = (kind: 'where' | 'around' | 'bus' | 'toilets') => {
+    const base = { confidence: 1, via: 'keywords' as const };
+    if (kind === 'toilets') return void search('toilets', 'Toilets');
+    if (kind === 'where') return void ask({ ...base, name: 'whereAmI', utterance: 'Where am I?' }, 'Where am I?');
+    if (kind === 'around') return void ask({ ...base, name: 'aroundMe', utterance: "What's around me?" }, "What's around me?");
+    return void ask({ ...base, name: 'nearestBusStop', utterance: 'Nearest bus stop' }, 'Nearest bus stop');
+  };
+
+  /** The search box takes places ("tesco") and questions ("what's on my left"). */
+  const submit = async () => {
+    const text = query.trim();
+    if (!text || !index) return;
+    setChip(null);
+    const qm = quickMatch(text);
+    if (QUESTIONS.has(qm.name)) return void ask(qm, text);
+    if (qm.name === 'navigateTo' && qm.query) {
+      const r = navigateTo(qm.query);
+      if (!r.ok) speak(r.say);
+      return;
+    }
+    if (qm.name === 'nearest' && qm.query) return void search(qm.query);
+    // Plain words: a place search first (free, offline); Gemini only if that finds nothing.
+    if (search(text, undefined, true)) return;
+    if (net === 'online') {
+      setBusy(true);
+      const g = await geminiPickTool(text);
+      setBusy(false);
+      if (g.ok) {
+        if (QUESTIONS.has(g.intent.name)) return void ask(g.intent, text);
+        if ((g.intent.name === 'nearest' || g.intent.name === 'navigateTo') && g.intent.query) return void search(g.intent.query);
+      }
+    }
+    search(text);
+  };
+
+  const clearSearch = () => {
+    stopMoving();
+    setQuery('');
+    setChip(null);
+    setResults([]);
+    setAnswer(null);
+    setSel(null);
+    setRoute(null);
+    setMode('explore');
+    setFollow(true);
+    mapRef.current?.flyTo(meRef.current, 0.8);
+  };
+
+  // ---------------------------------------------------------------- walk controls
+  const startWalk = (r: Route | null = route) => {
+    if (!r || !sel) return;
+    stopMoving();
+    const src: PositionSource = settings.realGps ? createGpsSource() : createSimWalk(r.path, { speedFactor: speed });
+    const g = createGuidance({ route: r, source: src, onSpeak: speak, onState: setGstate, reassuranceEveryMeters: DEFAULT_PROFILE.reassuranceEveryMeters });
+    unsubRef.current = src.subscribe(setMe);
     sourceRef.current = src;
     guidanceRef.current = g;
+    setMode('nav');
+    setShowSteps(false);
+    setFollow(true);
+    mapRef.current?.flyTo(meRef.current, 0.42, 900);
     g.start();
     src.start();
-    setWalking('running');
+  };
+
+  const endWalk = () => {
+    stopMoving();
+    setMode('place');
+    setFollow(false);
+    if (sel) {
+      const r = plan(sel, profileId);
+      if (r) mapRef.current?.fitPoints(r.path, 30);
+    }
+    speak('Navigation ended.');
+  };
+
+  const finish = () => {
+    stopMoving();
+    setSel(null);
+    setRoute(null);
+    setResults([]);
+    setQuery('');
+    setChip(null);
+    setMode('explore');
+    setFollow(true);
+    mapRef.current?.flyTo(meRef.current, 0.8);
   };
 
   const reroute = () => {
-    if (!destination) return;
-    const from = sourceRef.current?.current() ?? position;
-    const r = planRoute(destination, profile.routeProfile, from);
+    if (!sel) return;
+    const from = sourceRef.current?.current() ?? meRef.current;
+    const r = plan(sel, profileId, from);
     if (r) {
       speak({ text: 'New route from here.', priority: 'interrupt' });
       startWalk(r);
     }
   };
 
-  const sim = () => (sourceRef.current?.kind === 'simulated' ? (sourceRef.current as SimWalk) : null);
   const pauseResume = () => {
     const s = sim();
     if (!s) return;
-    if (s.isRunning()) {
-      s.pause();
-      setWalking('paused');
-    } else {
-      s.resume();
-      setWalking('running');
-    }
+    if (s.isRunning()) s.pause();
+    else s.resume();
+    setPaused(!s.isRunning());
   };
   const changeSpeed = (f: number) => {
     setSpeed(f);
     sim()?.setSpeedFactor(f);
   };
 
-  useEffect(() => {
-    if (gstate?.arrived) setWalking('idle');
-  }, [gstate?.arrived]);
+  // ---------------------------------------------------------------- bus
+  const stop = sel?.stop ?? null;
+  const stopRoutes: BusRoute[] = useMemo(() => (index && stop ? routesAt(index, stop) : []), [index, stop]);
+  const rideRoute = stopRoutes.find((r) => r.id === rideRouteId) ?? null;
+  const ahead = useMemo(() => {
+    if (!index || !stop || !rideRoute) return [];
+    const byId = new Map(index.pack.busStops.map((s) => [s.id, s]));
+    const i = rideRoute.stops.indexOf(stop.id);
+    return rideRoute.stops.slice(i + 1, i + 16).map((id) => byId.get(id)).filter((s): s is NonNullable<typeof s> => !!s);
+  }, [index, stop, rideRoute]);
 
-  useEffect(() => () => stopWalk(), []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const nextStep = () => speak({ text: guidanceRef.current?.nextStep() ?? 'Choose a destination first.' });
-  const repeat = () => speak({ text: guidanceRef.current?.lastPrompt() ?? prompts[0]?.text ?? 'Nothing to repeat yet.' });
-
-  // ---- asking (F4): every intent runs through the same tool layer
-  const navigateTo = (q: string): ToolResult => {
-    if (!index || !router) return { ok: false, intent: 'navigateTo', say: 'The map is still loading.' };
-    const found = findPlaces(index, router, position, q, 5);
-    setHits(found);
-    setQuery(q);
-    if (!found.length) return { ok: false, intent: 'navigateTo', say: `I couldn't find ${q} in the downloaded area.` };
-    choose(found[0].place);
-    return { ok: true, intent: 'navigateTo', say: '' }; // choose() already spoke the route
+  const nextBuses = async () => {
+    if (!index || !stop) return;
+    setLoadingArrivals(true);
+    const r = await busArrivals(index, stop);
+    setLoadingArrivals(false);
+    setArrivals(r.say);
+    speak(r.say);
   };
 
-  const onIntent = async (intent: Intent) => {
-    if (!index || !tools) return;
-    const res = await runIntent(intent, {
-      index,
-      tools,
-      here: sourceRef.current?.current() ?? position,
-      guidance: guidanceRef.current,
-      lastSaid: prompts[0]?.text ?? null,
-      navigateTo,
-      openHelp: () => setHelpOpen(true),
-    });
-    if (res.say) speak({ text: res.say, milestone: res.milestone });
-    if (res.intent === 'nearest' && Array.isArray(res.data)) setHits(res.data);
+  const startRide = () => {
+    if (!index || !stop || !rideRoute || !alightId) return;
+    const p = planBusRide(index, rideRoute, stop.id, alightId);
+    if (!p) return speak('That bus does not go to that stop from here.');
+    stopMoving();
+    const src = createSimWalk(p.line, { speed: BUS_SPEED, speedFactor: speed, jitterMeters: 4 });
+    unsubRef.current = src.subscribe(setMe);
+    const r = createBusRide({ plan: p, source: src, onSpeak: speak, onState: setRide });
+    sourceRef.current = src;
+    rideRef.current = r;
+    setRidePlan(p);
+    setMode('ride');
+    setFollow(true);
+    mapRef.current?.fitPoints(p.line, 60);
+    r.start();
+    src.start();
   };
 
-  const highlights = destination ? [destination] : (hits ?? []).map((h) => h.place);
+  const endRide = () => {
+    stopMoving();
+    setMode('place');
+    setFollow(false);
+  };
+
+  const busSetup: BusSetup | null = stop
+    ? {
+        arrivals,
+        loadingArrivals,
+        onNextBuses: nextBuses,
+        routes: stopRoutes,
+        routeId: rideRouteId,
+        onRoute: (id) => {
+          setRideRouteId(id);
+          setAlightId(null);
+        },
+        ahead,
+        alightId,
+        onAlight: setAlightId,
+        onStartRide: startRide,
+      }
+    : null;
+
+  // ---------------------------------------------------------------- derived view values
+  const uiZoom = settings.textSize;
+  const walking = mode === 'nav';
+  const progress = gstate?.progressMeters ?? 0;
+  const remaining = route ? Math.max(0, route.lengthMeters - progress) : 0;
+  const nextWp = walking && route ? (gstate?.next ?? route.waypoints.find((w) => w.kind !== 'start') ?? null) : null;
+  const thenWp = nextWp && route ? (route.waypoints[route.waypoints.indexOf(nextWp) + 1] ?? null) : null;
+
+  const street = index?.streetAt(me, 80)?.name ?? null;
+  const atVenue = distance(me, VENUE) < 40;
+  const age = index ? (index.ageDays() === 0 ? 'Map saved today' : `Map saved ${index.ageDays()} days ago`) : '';
+  const hereName = atVenue ? 'Marshgate, UCL East' : (street ?? 'Your position');
+  const hereSub = [atVenue && street ? `Near ${street}` : null, age].filter(Boolean).join(' · ');
+  const where = `${street ? `${street}, ` : ''}${me.lat.toFixed(5)}, ${me.lng.toFixed(5)}`;
+  const smsHref = `sms:?&body=${encodeURIComponent(`I need help. My location: ${where} https://maps.google.com/?q=${me.lat.toFixed(5)},${me.lng.toFixed(5)}`)}`;
+
+  const pins: MapPin[] =
+    mode === 'results'
+      ? results.map((r, i) => ({ at: r.target, n: i + 1, label: `${i + 1}. ${targetName(r.target)}, ${fmtDist(r.walk)}`, onClick: () => choose(r.target) }))
+      : [];
+  const showRoute = !!route && (mode === 'place' || mode === 'nav' || mode === 'arrived');
+  const dest = sel && (mode === 'place' || mode === 'nav' || mode === 'arrived') ? sel : null;
+
+  let banner = null;
+  if (walking && gstate?.offRoute) {
+    banner = <NavBanner warn icon="wrong_location" dist="" title="Off route" sub={`About ${Math.round(gstate.offsetMeters / 10) * 10} metres from the route. Press Reroute.`} />;
+  } else if (walking && gstate?.poorGps) {
+    banner = <NavBanner warn icon="gps_not_fixed" dist="" title="Poor GPS" sub="Waiting for a better signal before the next instruction." />;
+  } else if (walking && nextWp) {
+    banner = (
+      <NavBanner
+        icon={nextWp.icon ?? 'straight'}
+        dist={fmtDist(Math.max(0, nextWp.distanceAlong - progress))}
+        title={nextWp.title ?? nextWp.instruction}
+        sub={nextWp.detail}
+        then={thenWp && thenWp.kind !== 'start' ? { icon: thenWp.icon ?? 'straight', title: thenWp.title ?? '' } : null}
+      />
+    );
+  } else if (mode === 'ride' && ride && ridePlan) {
+    const alight = ridePlan.stops[ridePlan.stops.length - 1];
+    banner = ride.arrived ? (
+      <NavBanner icon="flag" dist="" title="This is your stop" sub={alight.name} />
+    ) : (
+      <NavBanner
+        icon={ride.stopsLeft === 1 ? 'notifications_active' : 'directions_bus'}
+        dist={`${ride.stopsLeft} stop${ride.stopsLeft === 1 ? '' : 's'}`}
+        title={ride.stopsLeft === 1 ? 'Your stop is next. Ring the bell.' : `Next: ${ride.nextStop?.name ?? ''}`}
+        sub={`Get off at ${alight.name}`}
+      />
+    );
+  }
+
+  const arrive = new Date(Date.now() + (remaining / 1.4) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   return (
-    <>
-      <a className="skip-link" href="#main">Skip to main content</a>
-      <header className="app-header">
-        <h1>Offline navigation</h1>
-        <div className={`net-status net-${mode}`} aria-hidden="true">
-          {mode === 'online' ? 'Online' : 'Offline'}
-        </div>
-        <label className="switch">
-          <input type="checkbox" checked={mode === 'offline'} disabled={!connectivity.browserOnline()} onChange={(e) => connectivity.forceOffline(e.target.checked)} />
-          <span>Wi-Fi off (demo)</span>
-        </label>
-      </header>
+    <main className={`shell${settings.mapStyle === 'highContrast' ? ' hc' : ''}`} style={{ background: mapBackground(settings.mapStyle), ['--ui-zoom' as string]: uiZoom }}>
+      {index && (
+        <MapCanvas
+          ref={mapRef}
+          index={index}
+          palette={settings.mapStyle}
+          me={me}
+          meStyle={walking || mode === 'ride' ? 'arrow' : 'dot'}
+          route={showRoute ? route : null}
+          progress={walking ? progress : null}
+          pins={pins}
+          dest={dest}
+          line={mode === 'ride' && ridePlan ? ridePlan.line : null}
+          follow={follow}
+          onUserMove={() => setFollow(false)}
+          uiZoom={uiZoom}
+          navMode={walking || mode === 'ride'}
+          label={`Map of ${index.pack.name}${showRoute && sel ? `, route to ${targetName(sel)}` : ''}`}
+        />
+      )}
 
-      <main id="main" className="app-main">
-        <div className="sr-live" role="status" aria-live="polite">
-          {announcement}
-        </div>
-        {error && (
-          <p className="error" role="alert">
-            {error}
-          </p>
+      <div className="visually-hidden" role="status" aria-live="polite">
+        {announce}
+      </div>
+
+      <div className="right-col" style={{ zoom: uiZoom }}>
+        <RightControls
+          offline={net === 'offline'}
+          onToggleOffline={() => connectivity.forceOffline(net !== 'offline')}
+          onZoomIn={() => mapRef.current?.zoomBy(1 / 1.6)}
+          onZoomOut={() => mapRef.current?.zoomBy(1.6)}
+          following={follow}
+          onRecenter={() => {
+            setFollow(true);
+            mapRef.current?.flyTo(me, walking ? 0.42 : 0.8);
+          }}
+          onSettings={() => setSettingsOpen(true)}
+          onHelp={() => setHelpOpen(true)}
+        />
+      </div>
+
+      <div className="attribution">© OpenStreetMap contributors · TfL Open Data</div>
+
+      <div className="left-col" style={{ zoom: uiZoom }}>
+        {mode !== 'nav' && mode !== 'ride' && mode !== 'arrived' ? (
+          <div className="top-stack">
+            <SearchBar query={query} onQuery={setQuery} onSubmit={submit} onClear={clearSearch} busy={busy} />
+            <CategoryChips active={mode === 'results' ? chip : null} onPick={pickChip} />
+          </div>
+        ) : (
+          <div className="top-stack">{banner}</div>
         )}
 
-        <div className="layout">
-          <div className="controls">
-            {helpOpen && (
-              <HelpPanel here={position} street={index?.streetAt(position, 40)?.name ?? null} profile={profile} onClose={() => setHelpOpen(false)} />
-            )}
+        <div className="bottom-stack">
+          {!index && <div className="card">{error ? `Could not load the area map: ${error}` : 'Loading the area map…'}</div>}
 
-            <AskPanel disabled={!index} onIntent={onIntent} />
+          {index && mode === 'explore' && !answer && <ExploreCard hereName={hereName} hereSub={hereSub} onAsk={onAskButton} />}
 
-            <section aria-labelledby="where-h" className="panel">
-              <h2 id="where-h">Where to?</h2>
-              <form onSubmit={search} className="search">
-                <label htmlFor="q" className="visually-hidden">
-                  Place name or kind of place
-                </label>
-                <input id="q" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Tesco, pharmacy, toilets…" autoComplete="off" disabled={!index} />
-                <button type="submit" className="big" disabled={!index}>
-                  Search
-                </button>
-              </form>
-              {hits && hits.length > 0 && (
-                <ul className="results" aria-label="Search results">
-                  {hits.map((h) => (
-                    <li key={h.place.id}>
-                      <button type="button" className={destination?.id === h.place.id ? 'result chosen' : 'result'} aria-pressed={destination?.id === h.place.id} onClick={() => choose(h.place)}>
-                        <strong>{h.place.name}</strong>
-                        <span>{Math.round((h.walkMeters ?? h.straightMeters) / 10) * 10} m walk</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
+          {index && mode === 'explore' && answer && (
+            <AnswerCard answer={answer} me={me} onClose={() => setAnswer(null)} onSayAgain={() => speak(answer.text)} onChoose={choose} />
+          )}
 
-            <section aria-labelledby="prof-h" className="panel">
-              <fieldset className="profiles">
-                <legend id="prof-h">Route type</legend>
-                {PROFILES.map((p) => (
-                  <label key={p} className="radio">
-                    <input type="radio" name="profile" value={p} checked={profile.routeProfile === p} onChange={() => changeProfile(p)} />
-                    {PROFILE_LABELS[p]}
-                  </label>
-                ))}
-              </fieldset>
-              {route && (
-                <p className="route-summary">
-                  {route.lengthMeters} m · {Math.round(route.durationSeconds / 60)} min · {route.crossings} crossing{route.crossings === 1 ? '' : 's'} ({route.signalledCrossings} with signals)
-                  {route.tradeOff && (
-                    <>
-                      <br />
-                      {route.tradeOff}
-                    </>
-                  )}
-                </p>
-              )}
-            </section>
+          {mode === 'results' && <ResultsCard title={resultsTitle} results={results} me={me} onClose={clearSearch} onChoose={choose} />}
 
-            <section aria-labelledby="walk-h" className="panel">
-              <h2 id="walk-h">Walk</h2>
-              <fieldset className="profiles">
-                <legend>Position from</legend>
-                <label className="radio">
-                  <input type="radio" name="src" checked={sourceKind === 'simulated'} onChange={() => setSourceKind('simulated')} disabled={walking !== 'idle'} />
-                  Simulated walk
-                </label>
-                <label className="radio">
-                  <input type="radio" name="src" checked={sourceKind === 'gps'} onChange={() => setSourceKind('gps')} disabled={walking !== 'idle' || !gpsAvailable()} />
-                  Real GPS
-                </label>
-              </fieldset>
-              <div className="button-row">
-                {walking === 'idle' ? (
-                  <button type="button" className="big" onClick={() => startWalk()} disabled={!route}>
-                    Start
-                  </button>
-                ) : (
-                  <>
-                    {sourceKind === 'simulated' && (
-                      <button type="button" className="big" onClick={pauseResume}>
-                        {walking === 'paused' ? 'Resume' : 'Pause'}
-                      </button>
-                    )}
-                    <button type="button" onClick={stopWalk}>
-                      Stop
-                    </button>
-                  </>
-                )}
-                <button type="button" onClick={nextStep} disabled={!route}>
-                  What next?
-                </button>
-                <button type="button" onClick={repeat}>
-                  Repeat
-                </button>
-                {gstate?.offRoute && (
-                  <button type="button" className="big warn" onClick={reroute}>
-                    Reroute
-                  </button>
-                )}
-              </div>
-              {sourceKind === 'simulated' && walking !== 'idle' && (
-                <div className="button-row" role="group" aria-label="Demo controls">
-                  <span>Speed:</span>
-                  {SPEEDS.map((f) => (
-                    <button key={f} type="button" aria-pressed={speed === f} className={speed === f ? 'chosen' : ''} onClick={() => changeSpeed(f)}>
-                      {f}×
-                    </button>
-                  ))}
-                  <button type="button" onClick={() => sim()?.setSidestep(sim() && gstate?.offRoute ? 0 : 40)}>
-                    {gstate?.offRoute ? 'Step back on route' : 'Step off route'}
-                  </button>
-                  <button type="button" onClick={() => sim()?.setAccuracy(gstate?.poorGps ? null : 45)}>
-                    {gstate?.poorGps ? 'Good GPS' : 'Poor GPS'}
-                  </button>
-                </div>
-              )}
-              {gstate && (
-                <p className="route-summary">
-                  {gstate.arrived ? 'Arrived.' : `${gstate.remainingMeters} m to go`}
-                  {gstate.offRoute && ' · off route'}
-                  {gstate.poorGps && ' · poor GPS'}
-                </p>
-              )}
-            </section>
+          {mode === 'place' && sel && (
+            <PlaceCard
+              target={sel}
+              route={route}
+              noRouteText={noRouteText}
+              profile={profileId}
+              onProfile={changeProfile}
+              onStart={() => startWalk()}
+              showSteps={showSteps}
+              onToggleSteps={() => setShowSteps((v) => !v)}
+              onBack={() => {
+                if (results.length) {
+                  setMode('results');
+                  setSel(null);
+                  setRoute(null);
+                  mapRef.current?.fitPoints([me, ...results.slice(0, 5).map((r) => r.target)]);
+                } else finish();
+              }}
+              bus={busSetup}
+            />
+          )}
 
-            {index && (
-              <BusPanel index={index} here={position} speedFactor={speed} speak={speak} onPosition={setPosition} onLine={setBusLine} />
-            )}
+          {walking && (
+            <WalkCard
+              minutes={`${walkMinutes(remaining)} min`}
+              meta={`${fmtDist(remaining)} · arrive ${arrive}`}
+              simulated={sourceRef.current?.kind === 'simulated'}
+              paused={paused}
+              offRoute={!!gstate?.offRoute}
+              poorGps={!!gstate?.poorGps}
+              speed={speed}
+              onSpeed={changeSpeed}
+              onEnd={endWalk}
+              onRepeat={() => speak(guidanceRef.current?.lastPrompt() ?? lastSaid.current ?? 'Nothing to repeat yet.')}
+              onWhatNext={() => speak(guidanceRef.current?.nextStep() ?? 'Choose a destination first.')}
+              onPause={pauseResume}
+              onReroute={reroute}
+              onStepOff={() => sim()?.setSidestep(gstate?.offRoute ? 0 : 40)}
+              onPoorGps={() => sim()?.setAccuracy(gstate?.poorGps ? null : 45)}
+            />
+          )}
 
-            <section aria-labelledby="prompts-h" className="panel">
-              <h2 id="prompts-h">Prompts</h2>
-              {prompts.length === 0 ? (
-                <p className="muted">Spoken prompts appear here.</p>
-              ) : (
-                <ol className="prompts" reversed>
-                  {prompts.map((p) => (
-                    <li key={p.id}>
-                      {p.milestone && <span className={`earcon earcon-${p.milestone}`}>{MILESTONE_LABEL[p.milestone]}</span>}
-                      {p.text}
-                    </li>
-                  ))}
-                </ol>
-              )}
-            </section>
-          </div>
+          {mode === 'ride' && ridePlan && (
+            <RideCard
+              title={ride?.arrived ? 'At your stop' : `${ride?.stopsLeft ?? ridePlan.stops.length - 1} stops to go`}
+              meta={`Bus ${ridePlan.route.name} to ${ridePlan.route.destination ?? ''}`}
+              speed={speed}
+              onSpeed={changeSpeed}
+              onEnd={endRide}
+              onRepeat={() => speak(lastSaid.current ?? 'Nothing to repeat yet.')}
+            />
+          )}
 
-          <section aria-labelledby="map-h" className="panel map-panel">
-            <h2 id="map-h">Map</h2>
-            {index ? (
-              <MapView index={index} position={position} route={route} highlights={highlights} lines={busLine ? [busLine] : []} />
-            ) : (
-              !error && <p>Loading the area map…</p>
-            )}
-            <p className="sim-label">
-              {walking !== 'idle' && sourceKind === 'simulated'
-                ? 'Simulated walk: positions are generated along the route at walking pace, with GPS-like jitter.'
-                : sourceKind === 'gps'
-                  ? 'Real GPS.'
-                  : 'Position: Marshgate, UCL East, until a walk starts.'}
-            </p>
-          </section>
+          {mode === 'arrived' && sel && <ArrivedCard name={targetName(sel)} onDone={finish} />}
         </div>
-      </main>
-    </>
+      </div>
+
+      <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} where={where} smsHref={smsHref} />
+      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} settings={settings} onChange={updateSettings} gpsAvailable={gpsAvailable()} />
+    </main>
   );
 }

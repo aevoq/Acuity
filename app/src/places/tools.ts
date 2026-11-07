@@ -98,12 +98,12 @@ export function createTools({ index, router }: ToolDeps) {
     /** "Where am I?" Nearest street plus nearest landmark. */
     whereAmI(_args: Record<string, never> | undefined, here: Position): ToolResult {
       if (here.accuracy > 100) return fail('whereAmI', `I can't tell where you are. GPS is only accurate to about ${metresWords(here.accuracy)}.`);
-      const street = index.streetAt(here, 40);
+      const street = index.streetAt(here, 80);
       const landmark = index.placesNear(here, 80, 1)[0];
-      const parts: string[] = [];
-      parts.push(street ? `You are on ${street.name}` : 'You are not on a named street');
-      if (landmark) parts.push(`near ${landmark.place.name}, ${metresWords(landmark.meters)} ${directionWords(here, landmark.place)}`);
-      return ok('whereAmI', `${parts.join(', ')}.${accuracyCaveat(here)}`, { street: street?.name ?? null, landmark: landmark?.place ?? null });
+      // "on" only when really on it; "near" up to 80 m (inside a park, a station, a plaza).
+      const where = !street ? 'You are not near a named street.' : street.meters <= 25 ? `You are on ${street.name}.` : `You are near ${street.name}.`;
+      const near = landmark ? ` Nearest place: ${landmark.place.name}, ${metresWords(landmark.meters)} ${directionWords(here, landmark.place)}.` : '';
+      return ok('whereAmI', `${where}${near}${accuracyCaveat(here)}`, { street: street?.name ?? null, landmark: landmark?.place ?? null });
     },
 
     /** "Where's the nearest bus stop?" With its letter, direction and buses. */

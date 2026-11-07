@@ -1,67 +1,90 @@
-/* Design tokens. High contrast by default; dark mode follows the system. */
-:root {
-  --bg: #ffffff;
-  --fg: #111111;
-  --muted: #4a4a4a;
-  --line: #8a8a8a;
-  --accent: #0050c8;
-  --highlight: #c2185b;
-  --me: #d32f2f;
-  --ok: #1b5e20;
-  --warn: #8a4b00;
-  --map-bg: #f4f2ee;
-  --map-major: #9a8f80;
-  --map-minor: #c9c3b8;
-  --map-foot: #8a8a8a;
-  --map-steps: #6b3fa0;
-  --map-crossing: #555555;
-  --map-signals: #1b7f3a;
-  --focus: #ffbf00;
-  --bus: #c62828;
-  color-scheme: light dark;
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  font-size: 18px;
-  line-height: 1.5;
+/* Global base. Fonts are bundled (not from Google), so they work offline:
+   Atkinson Hyperlegible via @fontsource (imported in main.tsx) and a subset of
+   Material Symbols Rounded with only the icons the UI uses
+   (scripts/fonts/fetch-icons.mjs). */
+
+@font-face {
+  font-family: 'Material Symbols Rounded';
+  font-style: normal;
+  font-weight: 500;
+  font-display: block;
+  src: url('./assets/fonts/material-symbols-rounded-subset.woff2') format('woff2');
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0f0f10;
-    --fg: #f2f2f2;
-    --muted: #c2c2c2;
-    --line: #6f6f6f;
-    --accent: #7fb2ff;
-    --highlight: #ff6fa8;
-    --me: #ff6b6b;
-    --ok: #7ddc8a;
-    --warn: #ffc067;
-    --map-bg: #1a1a1c;
-    --map-major: #8d8578;
-    --map-minor: #4a4744;
-    --map-foot: #6d6d6d;
-    --map-steps: #b48ce6;
-    --map-crossing: #bdbdbd;
-    --map-signals: #6fdc8c;
-    --bus: #ff8a80;
-  }
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #f3f0ea;
 }
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+}
 
 body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--fg);
+  font-family: 'Atkinson Hyperlegible', system-ui, sans-serif;
+  font-size: 18px;
+  line-height: 1.4;
+  color: #111111;
+}
+
+a {
+  color: #0050c8;
+}
+a:hover {
+  color: #00327d;
 }
 
 :focus-visible {
-  outline: 4px solid var(--focus);
+  outline: 4px solid #ffbf00;
   outline-offset: 2px;
 }
 
-button {
-  font: inherit;
-  min-height: 48px;
-  min-width: 48px;
-  cursor: pointer;
+input::placeholder {
+  color: #5a5a5a;
+}
+
+button,
+input,
+select {
+  font-family: inherit;
+}
+
+/* Icons are ligatures: the text is the icon name. Always aria-hidden. */
+.icon {
+  font-family: 'Material Symbols Rounded';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: nowrap;
+  direction: ltr;
+  -webkit-font-feature-settings: 'liga';
+  font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+  font-variation-settings: 'FILL' 0, 'wght' 500, 'GRAD' 0, 'opsz' 24;
+}
+.icon-fill {
+  font-variation-settings: 'FILL' 1, 'wght' 500, 'GRAD' 0, 'opsz' 24;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
 }
