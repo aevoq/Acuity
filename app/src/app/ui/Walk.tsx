@@ -68,6 +68,7 @@ export interface WalkCardProps extends SpeedProps {
   onReroute: () => void;
   onStepOff: () => void;
   onPoorGps: () => void;
+  onCamera: () => void;
 }
 
 export function WalkCard(p: WalkCardProps) {
@@ -94,6 +95,10 @@ export function WalkCard(p: WalkCardProps) {
         <button type="button" className="tile" onClick={p.onRepeat}>
           <Icon name="replay" />
           Repeat
+        </button>
+        <button type="button" className="tile" onClick={p.onCamera}>
+          <Icon name="traffic" />
+          Check light
         </button>
         <button type="button" className="tile" onClick={p.onWhatNext}>
           <Icon name="record_voice_over" />

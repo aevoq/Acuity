@@ -19,6 +19,7 @@ export interface RightControlsProps {
   following: boolean;
   onRecenter: () => void;
   onSettings: () => void;
+  onCamera: () => void;
   onHelp: () => void;
 }
 
@@ -45,6 +46,9 @@ export function RightControls(p: RightControlsProps) {
       </div>
       <button type="button" className={`square-btn${p.following ? ' following' : ''}`} aria-label="Centre the map on my position" onClick={p.onRecenter}>
         <Icon name="my_location" fill />
+      </button>
+      <button type="button" className="square-btn" aria-label="Open the camera, to read a traffic light or ask about your surroundings" onClick={p.onCamera}>
+        <Icon name="photo_camera" />
       </button>
       <button type="button" className="square-btn" aria-label="Settings: map style, text size, voice" onClick={p.onSettings}>
         <Icon name="settings" />

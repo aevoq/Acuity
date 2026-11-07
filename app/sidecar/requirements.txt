@@ -1,0 +1,13 @@
+# The local camera + voice service (app/sidecar/server.py).
+# Chenxi's detector (Acuity/requirements.txt):
+ultralytics==8.4.204
+opencv-python==5.0.0.93
+# Abdullah's voice assistant (Abdullah/voice_assistant.py):
+numpy
+ollama
+faster-whisper
+sounddevice
+piper-tts
+# Also needed, outside pip:
+#   Ollama app (https://ollama.com) with:  ollama pull gemma3:4b
+#   Abdullah's Piper voice file en_GB-southern_english_female-low.onnx (+ .json) in Abdullah/

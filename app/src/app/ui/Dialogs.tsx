@@ -7,7 +7,7 @@ import type { MapPalette } from '../../mapview/MapCanvas';
 import { TEXT_SIZES, type Settings } from '../settings';
 import { Icon } from './Controls';
 
-function Modal({ open, onClose, className, labelledBy, children }: { open: boolean; onClose: () => void; className: string; labelledBy: string; children: ReactNode }) {
+export function Modal({ open, onClose, className, labelledBy, children }: { open: boolean; onClose: () => void; className: string; labelledBy: string; children: ReactNode }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const d = ref.current;

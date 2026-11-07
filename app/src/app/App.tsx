@@ -36,7 +36,8 @@ import { DEFAULT_PROFILE } from './defaultProfile';
 import { quickMatch } from './quickMatch';
 import { runIntent } from './runIntent';
 import { useSettings } from './settings';
-import { speakFallback } from './speakFallback';
+import { say } from './speaker';
+import { CameraSheet } from './ui/CameraSheet';
 import { AnswerCard, ArrivedCard, ExploreCard, PlaceCard, ResultsCard, type BusSetup } from './ui/Cards';
 import { CategoryChips, RightControls, SearchBar, type CATEGORIES } from './ui/Controls';
 import { HelpDialog, SettingsDialog } from './ui/Dialogs';
@@ -84,6 +85,7 @@ export function App() {
   const [speed, setSpeed] = useState(4);
   const [helpOpen, setHelpOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [camera, setCamera] = useState<{ open: boolean; light: boolean }>({ open: false, light: false });
   const [announce, setAnnounce] = useState('');
   // bus
   const [arrivals, setArrivals] = useState<string | null>(null);
@@ -119,7 +121,14 @@ export function App() {
     setAnnounce('');
     requestAnimationFrame(() => setAnnounce(r.text));
     const s = settingsRef.current;
-    speakFallback(r, { ...DEFAULT_PROFILE, speechRate: s.speechRate, usesScreenReader: s.screenReader || !s.voice });
+    say(r, { enabled: s.voice && !s.screenReader, rate: s.speechRate });
+  }, []);
+
+  /** Live region only (no voice). */
+  const announceOnly = useCallback((text: string) => {
+    lastSaid.current = text;
+    setAnnounce('');
+    requestAnimationFrame(() => setAnnounce(text));
   }, []);
 
   useEffect(() => {
@@ -747,6 +756,7 @@ export function App() {
             mapRef.current?.flyTo(me, walking ? 0.42 : 0.8);
           }}
           onSettings={() => setSettingsOpen(true)}
+          onCamera={() => setCamera({ open: true, light: false })}
           onHelp={() => setHelpOpen(true)}
         />
       </div>
@@ -841,6 +851,7 @@ export function App() {
               onReroute={reroute}
               onStepOff={() => sim()?.setSidestep(gstate?.offRoute ? 0 : 40)}
               onPoorGps={() => sim()?.setAccuracy(gstate?.poorGps ? null : 45)}
+              onCamera={() => setCamera({ open: true, light: true })}
             />
           )}
 
@@ -870,6 +881,14 @@ export function App() {
         </div>
       </div>
 
+      <CameraSheet
+        open={camera.open}
+        startWithLight={camera.light}
+        onClose={() => setCamera({ open: false, light: false })}
+        speak={speak}
+        announce={announceOnly}
+        online={net === 'online'}
+      />
       <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} where={where} smsHref={smsHref} />
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} settings={settings} onChange={updateSettings} gpsAvailable={gpsAvailable()} />
     </main>
