@@ -56,3 +56,5 @@
   border-top: 1px solid var(--line);
   background: var(--bg);
 }
+.map-busline { fill: none; stroke: var(--bus); stroke-width: 4; stroke-dasharray: 8 4; stroke-linecap: round; }
+.map-busstop { fill: var(--bg); stroke: var(--bus); stroke-width: 2; }

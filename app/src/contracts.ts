@@ -103,6 +103,12 @@ export interface BusStop extends LatLng {
   name: string;
   /** TfL NaPTAN id when known, for live arrivals online (F9). */
   naptanId: string | null;
+  /** Stop letter as on the flag, e.g. "Stop N". */
+  indicator?: string | null;
+  /** Direction as TfL words it, e.g. "towards Shadwell". */
+  towards?: string | null;
+  /** Route numbers that stop here ("25", "339"). */
+  lines?: string[];
 }
 
 export interface BusRoute {
@@ -114,6 +120,10 @@ export interface BusRoute {
   stops: string[];
   /** Usual gap between buses, for "usually every 8 to 10 minutes" offline. */
   frequencyMinutes: { min: number; max: number } | null;
+  /** Where the bus is going, as on its front ("Shadwell Station"). */
+  destination?: string;
+  /** How frequencyMinutes was found, so the app can say it honestly. */
+  frequencySource?: 'tfl-timetable' | 'estimated-from-arrivals';
 }
 
 export interface AreaPack {
@@ -200,7 +210,10 @@ export interface Route {
 // Asking the app (F4, ADR-004): the model picks the tool, the data answers
 // ---------------------------------------------------------------------------
 
-export type IntentName = 'nearest' | 'aroundMe' | 'leftRight' | 'whereAmI' | 'nextStep' | 'repeat' | 'help' | 'navigateTo' | 'unknown';
+export type IntentName =
+  | 'nearest' | 'aroundMe' | 'leftRight' | 'whereAmI' | 'nextStep' | 'repeat' | 'help' | 'navigateTo'
+  | 'nearestBusStop' | 'busArrivals'
+  | 'unknown';
 
 export interface Intent {
   name: IntentName;
@@ -210,6 +223,8 @@ export interface Intent {
   query?: string;
   /** leftRight: which side was asked about. */
   side?: 'left' | 'right' | 'ahead' | 'behind';
+  /** busArrivals: a bus number, if one was named ("25"). */
+  line?: string;
   /** 0..1. Below about 0.5 the app asks the user to rephrase. */
   confidence: number;
   /** Who picked the intent. */

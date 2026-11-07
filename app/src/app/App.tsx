@@ -11,7 +11,12 @@
 //  - controls are real buttons and radios, 48 px or larger, keyboard reachable.
 
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import type { Milestone, Place, Position, PositionSource, Route, RouteProfileId, SpeakRequest } from '../contracts';
+import type { Intent, LatLng, Milestone, Place, Position, PositionSource, Route, RouteProfileId, SpeakRequest, ToolResult } from '../contracts';
+import { createTools } from '../places/tools';
+import { AskPanel } from './AskPanel';
+import { BusPanel } from './BusPanel';
+import { HelpPanel } from './HelpPanel';
+import { runIntent } from './runIntent';
 import { MapView } from '../mapview/MapView';
 import { PROFILE_LABELS } from '../nav/costs';
 import { createGuidance, type Guidance, type GuidanceState } from '../nav/guidance';
@@ -55,6 +60,9 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [profile, setProfile] = useState(DEFAULT_PROFILE);
   const router = useMemo(() => (index ? createRouter(index) : null), [index]);
+  const tools = useMemo(() => (index ? createTools({ index, router }) : null), [index, router]);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [busLine, setBusLine] = useState<LatLng[] | null>(null);
 
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<PlaceHit[] | null>(null);
@@ -204,6 +212,32 @@ export function App() {
   const nextStep = () => speak({ text: guidanceRef.current?.nextStep() ?? 'Choose a destination first.' });
   const repeat = () => speak({ text: guidanceRef.current?.lastPrompt() ?? prompts[0]?.text ?? 'Nothing to repeat yet.' });
 
+  // ---- asking (F4): every intent runs through the same tool layer
+  const navigateTo = (q: string): ToolResult => {
+    if (!index || !router) return { ok: false, intent: 'navigateTo', say: 'The map is still loading.' };
+    const found = findPlaces(index, router, position, q, 5);
+    setHits(found);
+    setQuery(q);
+    if (!found.length) return { ok: false, intent: 'navigateTo', say: `I couldn't find ${q} in the downloaded area.` };
+    choose(found[0].place);
+    return { ok: true, intent: 'navigateTo', say: '' }; // choose() already spoke the route
+  };
+
+  const onIntent = async (intent: Intent) => {
+    if (!index || !tools) return;
+    const res = await runIntent(intent, {
+      index,
+      tools,
+      here: sourceRef.current?.current() ?? position,
+      guidance: guidanceRef.current,
+      lastSaid: prompts[0]?.text ?? null,
+      navigateTo,
+      openHelp: () => setHelpOpen(true),
+    });
+    if (res.say) speak({ text: res.say, milestone: res.milestone });
+    if (res.intent === 'nearest' && Array.isArray(res.data)) setHits(res.data);
+  };
+
   const highlights = destination ? [destination] : (hits ?? []).map((h) => h.place);
 
   return (
@@ -232,6 +266,12 @@ export function App() {
 
         <div className="layout">
           <div className="controls">
+            {helpOpen && (
+              <HelpPanel here={position} street={index?.streetAt(position, 40)?.name ?? null} profile={profile} onClose={() => setHelpOpen(false)} />
+            )}
+
+            <AskPanel disabled={!index} onIntent={onIntent} />
+
             <section aria-labelledby="where-h" className="panel">
               <h2 id="where-h">Where to?</h2>
               <form onSubmit={search} className="search">
@@ -347,6 +387,10 @@ export function App() {
               )}
             </section>
 
+            {index && (
+              <BusPanel index={index} here={position} speedFactor={speed} speak={speak} onPosition={setPosition} onLine={setBusLine} />
+            )}
+
             <section aria-labelledby="prompts-h" className="panel">
               <h2 id="prompts-h">Prompts</h2>
               {prompts.length === 0 ? (
@@ -366,7 +410,11 @@ export function App() {
 
           <section aria-labelledby="map-h" className="panel map-panel">
             <h2 id="map-h">Map</h2>
-            {index ? <MapView index={index} position={position} route={route} highlights={highlights} /> : !error && <p>Loading the area map…</p>}
+            {index ? (
+              <MapView index={index} position={position} route={route} highlights={highlights} lines={busLine ? [busLine] : []} />
+            ) : (
+              !error && <p>Loading the area map…</p>
+            )}
             <p className="sim-label">
               {walking !== 'idle' && sourceKind === 'simulated'
                 ? 'Simulated walk: positions are generated along the route at walking pace, with GPS-like jitter.'

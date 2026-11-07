@@ -45,6 +45,12 @@ doc "PRD: Offline-first navigation for blind and low vision travellers".
 - **Simulated walk** (`src/sim/simWalk.ts`): a `PositionSource` walking the route at 1.4 m/s × speed with GPS jitter; demo hooks `setSidestep(m)` and `setAccuracy(m)` trigger the off-route and poor-GPS prompts.
 - **Place search** (`src/places/search.ts`): `findPlaces(index, router, from, query)` matches name, brand or everyday kind words ("chemist", "loo", "coffee"), ranked by walking distance.
 - **Speech for now** (`src/app/speakFallback.ts`): plain `speechSynthesis`. `src/voice` replaces it (same `SpeakRequest`).
+- **Tool layer** (`src/places/tools.ts`, ADR-004): `createTools({ index, router })` → `nearest`, `aroundMe`, `leftRight`, `whereAmI`, `nearestBusStop`, each returning a `ToolResult` whose `say` is built from pack data. Clock positions when heading is known, compass words when not; a poor-GPS caveat when accuracy > 30 m. `TOOL_DECLARATIONS` is the same set as Gemini function declarations.
+- **Running an intent** (`src/app/runIntent.ts`): one switch from `Intent` to tool. Buttons, the offline matcher and Gemini all go through it.
+- **Offline matcher, placeholder** (`src/app/quickMatch.ts`): regex rules → `Intent`, so the Ask box works with Wi-Fi off. `src/agent`'s matcher replaces it.
+- **Transit** (`src/transit`): the pack holds TfL bus stops (letter, "towards", lines) and every line's ordered stops both ways, plus a frequency **estimated** from live arrival gaps at build time (TfL's bus timetable endpoint is empty), flagged `frequencySource: 'estimated-from-arrivals'`. `busArrivals()` is live via `onlineFetch` to TfL (no key), else `frequencySentence()` says "usually every N to M minutes; not live". `createBusRide()` (F8) counts stops down from any `PositionSource`: click per stop passed, "your stop is next, ring the bell" one stop early, then "this is your stop".
+- **Gemini** (`server/gemini.ts`, `api/gemini.ts`, `src/net/gemini.ts`): the key lives only in `app/.env` (`GEMINI_API_KEY`, optional `GEMINI_MODEL`, default `gemini-flash-latest`; see `.env.example`). `POST /api/gemini` is served by a Vite plugin in dev/preview and by `api/gemini.ts` on Vercel, with the same handler. Client: `callGemini()` (through `onlineFetch`) and `geminiPickTool(utterance)` → `Intent` via function calling. Gemini picks the tool; it never writes the answer.
+- **Help, minimal** (`src/app/HelpPanel.tsx`, F6): `tel:999`, `sms:` with location, call contact. Opens the phone's own screen; nothing is sent automatically.
 
 ## Toolkit
 

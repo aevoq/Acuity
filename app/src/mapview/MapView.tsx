@@ -21,12 +21,14 @@ export interface MapViewProps {
   position?: Position | null;
   /** Places to highlight (e.g. the answer to "nearest Tesco"). */
   highlights?: LatLng[];
+  /** Extra lines to draw, e.g. a bus ride's stop-to-stop line. */
+  lines?: LatLng[][];
   /** Follow the position marker. */
   follow?: boolean;
   label?: string;
 }
 
-export function MapView({ index, route, position, highlights = [], follow = true, label }: MapViewProps) {
+export function MapView({ index, route, position, highlights = [], lines = [], follow = true, label }: MapViewProps) {
   const { pack } = index;
   const proj = useMemo(() => makeProjection(pack.center), [pack]);
   // SVG space: x east, y SOUTH (flipped).
@@ -108,6 +110,17 @@ export function MapView({ index, route, position, highlights = [], follow = true
             <circle key={i} className={signals ? 'map-crossing-signals' : 'map-crossing'} cx={x} cy={y} r={span / 300} />
           ))}
         {routeD && <path className="map-route" d={routeD} />}
+        {lines.map((l, i) =>
+          l.length > 1 ? (
+            <g key={`line${i}`}>
+              <path className="map-busline" d={'M' + l.map((p) => xy(p).join(' ')).join('L')} />
+              {l.map((p, k) => {
+                const [x, y] = xy(p);
+                return <circle key={k} className="map-busstop" cx={x} cy={y} r={span / 180} />;
+              })}
+            </g>
+          ) : null,
+        )}
         {route?.waypoints.map((w) => {
           const [x, y] = xy(w);
           return <circle key={w.id} className={`map-wp map-wp-${w.kind}`} cx={x} cy={y} r={span / 140} />;

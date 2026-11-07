@@ -4,7 +4,7 @@
 // trade-offs and waypoints, then replays a walk through the guidance engine.
 import { readFileSync } from 'node:fs';
 import type { AreaPack, Position, PositionSource, RouteProfileId, SpeakRequest } from '../../src/contracts';
-import { pointAlong, destination } from '../../src/geo/geo';
+import { distance, pointAlong, destination } from '../../src/geo/geo';
 import { indexPack } from '../../src/pack/pack';
 import { createRouter } from '../../src/nav/router';
 import { createGuidance } from '../../src/nav/guidance';
@@ -51,3 +51,48 @@ for (let m = 0; m <= route.lengthMeters + 5; m += 1.4) {
 console.log('\nSpoken during the walk:');
 for (const s of spoken) console.log('  ' + s);
 console.log('final state:', JSON.stringify({ ...g.state(), next: undefined, lastPosition: undefined }));
+
+// ---------------------------------------------------------------- tools (F4)
+const { createTools } = await import('../../src/places/tools');
+const { quickMatch } = await import('../../src/app/quickMatch');
+const { frequencySentence } = await import('../../src/transit/arrivals');
+const tools = createTools({ index, router });
+const here: Position = { ...VENUE, accuracy: 6, heading: 90, speed: 0, timestamp: Date.now(), source: 'simulated' };
+console.log('\nTools at the venue, facing east:');
+console.log('  whereAmI:      ', tools.whereAmI(undefined, here).say);
+console.log('  aroundMe:      ', tools.aroundMe(undefined, here).say);
+console.log('  left:          ', tools.leftRight({ side: 'left' }, here).say);
+console.log('  right (no compass):', tools.leftRight({ side: 'right' }, { ...here, heading: null }).say);
+console.log('  nearest tesco: ', tools.nearest({ query: 'tesco' }, here).say);
+console.log('  nearest stop:  ', tools.nearestBusStop(undefined, here).say);
+console.log('  poor GPS where:', tools.whereAmI(undefined, { ...here, accuracy: 60 }).say);
+const stop = index.busStopsNear(here, 600, 1)[0]?.stop;
+if (stop) console.log('  offline buses: ', frequencySentence(index, stop));
+
+console.log('\nOffline matcher:');
+for (const q of ["where's the nearest pharmacy?", 'what is on my left', "what's around me", 'where am I', 'when is the next 339', 'take me to Tesco Express', 'say that again', 'I need help', 'nearest bus stop', 'blah blah']) {
+  const i = quickMatch(q);
+  console.log(`  ${q.padEnd(32)} → ${i.name}${i.query ? ` (${i.query})` : ''}${i.side ? ` (${i.side})` : ''}${i.line ? ` (line ${i.line})` : ''}`);
+}
+
+// ---------------------------------------------------------------- bus ride (F8)
+const { planBusRide, createBusRide } = await import('../../src/transit/busRide');
+const busRoute = index.pack.busRoutes.find((r) => stop && r.stops.includes(stop.id));
+if (stop && busRoute) {
+  const i = busRoute.stops.indexOf(stop.id);
+  const plan = planBusRide(index, busRoute, stop.id, busRoute.stops[Math.min(i + 5, busRoute.stops.length - 1)]);
+  if (plan) {
+    const ls = new Set<(p: Position) => void>();
+    const src: PositionSource = { kind: 'simulated', start() {}, stop() {}, subscribe: (l) => (ls.add(l), () => ls.delete(l)), current: () => null };
+    const said: string[] = [];
+    const ride = createBusRide({ plan, source: src, onSpeak: (r) => said.push(`${r.milestone ? `[${r.milestone}] ` : ''}${r.text}`) });
+    ride.start();
+    const total = plan.line.reduce((s, p, k) => (k ? s + distance(plan.line[k - 1], p) : 0), 0);
+    for (let m = 0; m <= total + 10; m += 6) {
+      const { point } = pointAlong(plan.line, m);
+      for (const l of ls) l({ ...point, accuracy: 8, heading: null, speed: 6, timestamp: Date.now(), source: 'simulated' });
+    }
+    console.log(`\nBus ride on the ${busRoute.name} from ${stop.name}:`);
+    for (const s of said) console.log('  ' + s);
+  }
+}

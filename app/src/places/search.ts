@@ -35,17 +35,18 @@ export function matchScore(place: Place, query: string): number {
   if (!q) return 0;
   const name = place.name.toLowerCase();
   const brand = (place.brand ?? '').toLowerCase();
+  // A query that is a kind of place ("chemist", "coffee", "toilets"): every
+  // place of that kind matches as well as one with the word in its name, so
+  // the nearest one wins rather than the one called "... Chemist".
+  const kind = KIND_WORDS.find((k) => k.re.test(q));
+  const isKind = !!kind && (kind.categories?.includes(place.category) || !!kind.tag?.test(place.osmTag));
   if (name === q || brand === q) return 1;
   if (brand && (brand.includes(q) || q.includes(brand))) return 0.9;
-  if (name.startsWith(q)) return 0.85;
+  if (name.startsWith(q) && !kind) return 0.85;
   // Every query word appears in the name ("tesco express" → "Tesco Express Stratford").
   const words = q.split(' ').filter((w) => w.length > 1);
   if (words.length && words.every((w) => name.includes(w))) return 0.8;
-  for (const k of KIND_WORDS) {
-    if (!k.re.test(q)) continue;
-    if (k.categories?.includes(place.category)) return 0.6;
-    if (k.tag?.test(place.osmTag)) return 0.6;
-  }
+  if (isKind) return 0.8;
   if (words.some((w) => w.length > 3 && name.includes(w))) return 0.4;
   return 0;
 }

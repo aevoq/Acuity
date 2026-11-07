@@ -25,3 +25,8 @@ dist-ssr
 
 # Raw Overpass download (rebuild input, not needed at runtime)
 scripts/pack/.cache/
+
+# Server-side secrets (GEMINI_API_KEY)
+.env
+.env.*
+!.env.example
