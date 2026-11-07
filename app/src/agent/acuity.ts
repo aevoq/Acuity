@@ -119,7 +119,11 @@ const QUESTION_WORDS = /\b(bench|benches|sit down|somewhere to sit|how far|how l
 /** "Is the light red?", "can you check the traffic light", "is it the green man?" */
 const LIGHT = /\b(traffic lights?|the lights?|signals?|green man|red man|is it (red|green)|(red|green) light|crossing lights?|pedestrian lights?)\b/;
 /** "What's in front of me?", "what does the sign say?" */
-const SCENE = /\b(what do you see|what can you see|describe|in front of me|what('?s| is) (ahead|there)|read (the|this|that) sign|what does (the|this|that) sign say|look ahead)\b/;
+/**
+ * The camera only when the person asks Acuity to LOOK. "What's around me", "what's ahead",
+ * "what's in front of me" are answered from the map (the pack), never by opening the camera.
+ */
+const SCENE = /\b(what do you see|what can you see|can you see|what are you seeing|(take a )?look (ahead|around|at|in front|for me)|use (the|your) camera|with the camera|read (the|this|that|a) sign|what does (the|this|that) sign say|describe what you see|describe (the )?scene|what colou?r is)\b/;
 
 const norm = (t: string) => t.toLowerCase().replace(/[.,!?]/g, ' ').replace(/\s+/g, ' ').trim();
 /** How to call her back: the wake word works during a journey; elsewhere the Talk button. */
@@ -342,7 +346,10 @@ export function createAcuity(d: AcuityDeps) {
     let picked: Intent | null = null;
     try {
       const a = await agentIntent(raw);
-      if (a.intent === 'nearestBench' || a.intent === 'routeStatus' || a.intent === 'stopNavigation' || a.intent === 'describeScene') return handle(`${a.intent === 'nearestBench' ? 'bench' : a.intent === 'routeStatus' ? 'how far' : a.intent === 'stopNavigation' ? 'stop navigation' : 'describe'}`);
+      // The model may say "describe the scene" for "what's here": the camera only if they asked to look.
+      if (a.intent === 'describeScene' && !SCENE.test(t)) a.intent = 'aroundMe';
+      if (a.intent === 'describeScene') return handle('what can you see');
+      if (a.intent === 'nearestBench' || a.intent === 'routeStatus' || a.intent === 'stopNavigation') return handle(`${a.intent === 'nearestBench' ? 'bench' : a.intent === 'routeStatus' ? 'how far' : 'stop navigation'}`);
       if (a.intent !== 'unknown') picked = { name: a.intent as Intent['name'], utterance: raw, query: a.query, side: a.side, confidence: 0.8, via: 'local-llm' };
     } catch {
       if (v.online) {

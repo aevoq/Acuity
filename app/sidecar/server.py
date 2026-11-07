@@ -240,7 +240,7 @@ INTENTS = {
     "repeat": "say the last thing again",
     "help": "emergency or help",
     "stopNavigation": "stop or cancel the walk",
-    "describeScene": "describe what the camera sees",
+    "describeScene": "ONLY when the person asks you to look with the camera (what can you see, read this sign); what is around, nearby, here or ahead is aroundMe or leftRight, answered from the map",
     "unknown": "none of these",
 }
 

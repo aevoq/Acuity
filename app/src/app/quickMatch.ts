@@ -9,15 +9,15 @@ const RULES: Array<{ re: RegExp; build: (u: string, m: RegExpMatchArray) => Omit
   { re: /\b(say (that|it) again|repeat|pardon|what did you say)\b/, build: () => ({ name: 'repeat', confidence: 0.9 }) },
   { re: /\b(what (do i do )?next|next step|which way now)\b/, build: () => ({ name: 'nextStep', confidence: 0.85 }) },
   { re: /\bwhere am i\b|\bwhat street\b/, build: () => ({ name: 'whereAmI', confidence: 0.9 }) },
-  { re: /\b(on|to) my (left|right)\b|\b(ahead|in front|behind) (of )?me\b/, build: (u) => ({ name: 'leftRight', side: /left/.test(u) ? 'left' : /right/.test(u) ? 'right' : /behind/.test(u) ? 'behind' : 'ahead', confidence: 0.85 }) },
-  { re: /\b(around|near|nearby|close to) me\b|\bwhat'?s (here|around)\b/, build: () => ({ name: 'aroundMe', confidence: 0.85 }) },
+  { re: /\b(on|to) my (left|right)\b|\b(ahead|in front|behind) (of )?me\b|\bwhat('?s| is) (ahead|in front)\b/, build: (u) => ({ name: 'leftRight', side: /left/.test(u) ? 'left' : /right/.test(u) ? 'right' : /behind/.test(u) ? 'behind' : 'ahead', confidence: 0.85 }) },
   { re: /\b(when|next) (is )?(the )?(next )?bus(es)?\b|\bbus (times|arrivals)\b|\bhow long (for|until) the\b|\bnext ([a-z]?\d{1,3})\b/, build: (u) => ({ name: 'busArrivals', line: u.match(/\b([a-z]?\d{1,3})\b/)?.[1], confidence: 0.8 }) },
   { re: /\b(nearest|closest) bus ?stop\b|\bwhere'?s the bus ?stop\b/, build: () => ({ name: 'nearestBusStop', confidence: 0.85 }) },
   { re: /\b(take me|navigate|directions|walk me|go|get me) to (.+)$/, build: (_u, m) => ({ name: 'navigateTo', query: m[2], confidence: 0.8 }) },
   {
-    re: /\b(nearest|closest|where'?s|where is|find|is there) (an? |the )?(.+)$/,
-    build: (_u, m) => ({ name: 'nearest', query: m[3].replace(/^(nearest|closest) /, '').replace(/ (near ?by|near me|around here)$/, ''), confidence: 0.75 }),
+    re: /\b(nearest|closest|where'?s|where is|find|is there) (an? |the )?(?!anything|something|everything|much|lots)(.+)$/,
+    build: (_u, m) => ({ name: 'nearest', query: m[3].replace(/^(nearest|closest) /, '').replace(/,/g, '').replace(/ (near ?by|near me|around here|close by|around me)$/, ''), confidence: 0.75 }),
   },
+  { re: /\b(around|near|nearby|close to) me\b|\bwhat('?s| is) (here|there|around|nearby)\b|\bclose by\b|\b(around|near) here\b|\bsurround(ings|ing me)\b|\bin the area\b/, build: () => ({ name: 'aroundMe', confidence: 0.85 }) },
 ];
 
 export function quickMatch(utterance: string): Intent {
