@@ -9,11 +9,13 @@
     "preview": "vite preview",
     "lint": "oxlint",
     "typecheck": "tsc -b",
-    "pack": "node scripts/pack/build-pack.mjs",
-    "check:nav": "npx -y tsx@4.20.6 scripts/check/nav-check.ts"
+    "pack": "node scripts/pack/build-pack.mjs --radius 4000 --name \"Stratford and the Olympic Park\"",
+    "check:nav": "npx -y tsx@4.20.6 scripts/check/nav-check.ts",
+    "map:offline": "node scripts/map/fetch-offline-map.mjs"
   },
   "dependencies": {
     "@fontsource/atkinson-hyperlegible": "^5.3.0",
+    "maplibre-gl": "^6.16.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },

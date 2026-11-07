@@ -574,8 +574,6 @@ export function App() {
         />
       </div>
 
-      <div className="attribution">© OpenStreetMap contributors · TfL Open Data</div>
-
       <div className="left-col" style={{ zoom: uiZoom }}>
         {mode !== 'nav' && mode !== 'ride' && mode !== 'arrived' ? (
           <div className="top-stack">

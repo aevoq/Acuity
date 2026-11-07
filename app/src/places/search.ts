@@ -40,6 +40,14 @@ export function matchScore(place: Place, query: string): number {
   // the nearest one wins rather than the one called "... Chemist".
   const kind = KIND_WORDS.find((k) => k.re.test(q));
   const isKind = !!kind && (kind.categories?.includes(place.category) || !!kind.tag?.test(place.osmTag));
+  // A kind query ("pharmacy", "toilets"): every place of that kind, or with the
+  // word in its name or brand, counts the same, so distance alone decides.
+  // Only when the query is JUST a kind ("pharmacy"), not a named place ("Stratford station").
+  const onlyKind = !!kind && q.replace(kind.re, '').trim() === '';
+  if (onlyKind) {
+    if (isKind || name.includes(q) || brand.includes(q)) return 0.8;
+    return 0;
+  }
   if (name === q || brand === q) return 1;
   if (brand && (brand.includes(q) || q.includes(brand))) return 0.9;
   if (name.startsWith(q) && !kind) return 0.85;

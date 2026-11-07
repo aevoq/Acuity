@@ -9,19 +9,43 @@
 }
 
 /* ---------------------------------------------------------------- map */
-.map {
+.shell .map {
   position: absolute;
   inset: 0;
-  touch-action: none;
-  cursor: grab;
+}
+/* MapLibre's canvas takes keyboard focus (arrows pan, +/- zoom). */
+.shell .maplibregl-canvas:focus-visible {
+  outline: 4px solid #ffbf00;
   outline-offset: -4px;
 }
-.map svg {
-  display: block;
+.shell .maplibregl-ctrl-attrib {
+  font: 400 12px 'Atkinson Hyperlegible', sans-serif;
+}
+/* Markers: MapLibre positions them (its own inline transform). */
+.ml-me {
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+.ml-me .map-me-arrow {
+  display: none;
+}
+.ml-me.arrow .map-me-arrow {
+  display: grid;
+}
+.ml-me.arrow .map-me-dot {
+  display: none;
+}
+.ml-dest {
+  pointer-events: none;
+  line-height: 0;
+}
+.ml-dest .icon {
+  font-size: 56px;
+  color: #c2185b;
+  text-shadow: 0 0 3px #ffffff, 0 2px 6px rgba(0, 0, 0, 0.35);
 }
 .map-pin {
-  position: absolute;
-  transform: translate(-50%, -50%);
   width: 40px;
   height: 40px;
   min-width: 40px;
@@ -35,28 +59,6 @@
   display: grid;
   place-items: center;
   padding: 0;
-}
-.map-dest {
-  position: absolute;
-  transform: translate(-50%, -92%);
-  pointer-events: none;
-}
-.map-dest .icon {
-  font-size: 56px;
-  color: #c2185b;
-  text-shadow: 0 0 3px #ffffff, 0 2px 6px rgba(0, 0, 0, 0.35);
-}
-.map-me {
-  position: absolute;
-  width: 0;
-  height: 0;
-  pointer-events: none;
-}
-.map-me-halo {
-  position: absolute;
-  border-radius: 50%;
-  background: rgba(0, 80, 200, 0.14);
-  border: 1px solid rgba(0, 80, 200, 0.35);
 }
 .map-me-arrow {
   position: absolute;
@@ -85,17 +87,6 @@
   background: #0050c8;
   border: 4px solid #ffffff;
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
-}
-.attribution {
-  position: absolute;
-  right: 12px;
-  bottom: 8px;
-  font-size: 12px;
-  color: #4a4a4a;
-  pointer-events: none;
-}
-.hc .attribution {
-  color: #d0d0d0;
 }
 
 /* ---------------------------------------------------------------- right column */
