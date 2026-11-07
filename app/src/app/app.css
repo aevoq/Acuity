@@ -45,8 +45,156 @@
   height: 28px;
 }
 
+.layout {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (min-width: 1000px) {
+  .layout {
+    grid-template-columns: minmax(340px, 420px) minmax(0, 1fr);
+    align-items: start;
+  }
+  .map-panel {
+    position: sticky;
+    top: 8px;
+  }
+}
+.controls {
+  display: grid;
+  gap: 16px;
+}
+
+.search {
+  display: flex;
+  gap: 8px;
+}
+.search input {
+  flex: 1;
+  min-width: 0;
+  min-height: 48px;
+  font: inherit;
+  padding: 8px 12px;
+  border: 2px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.results {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+  display: grid;
+  gap: 6px;
+}
+.result {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
+  padding: 8px 12px;
+  border: 2px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--fg);
+}
+.result.chosen,
+button.chosen {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent);
+}
+
+.profiles {
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+.profiles legend {
+  font-size: 1.2rem;
+  font-weight: 700;
+  margin-bottom: 4px;
+  padding: 0;
+}
+.radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  cursor: pointer;
+}
+.radio input {
+  width: 22px;
+  height: 22px;
+}
+
+.route-summary {
+  margin: 8px 0 0;
+  font-weight: 600;
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.button-row button:not(.big) {
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 2px solid var(--line);
+  background: var(--bg);
+  color: var(--fg);
+}
+.big.warn {
+  background: var(--me);
+  border-color: var(--me);
+}
+
+.prompts {
+  margin: 0;
+  padding-left: 1.4em;
+  display: grid;
+  gap: 6px;
+}
+.prompts li:first-child {
+  font-weight: 700;
+}
+.earcon {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 1px 6px;
+  margin-right: 6px;
+  border-radius: 4px;
+  border: 1.5px solid var(--accent);
+  color: var(--accent);
+}
+.earcon-offRoute { border-color: var(--me); color: var(--me); }
+.earcon-arrived { border-color: var(--ok); color: var(--ok); }
+
+.muted {
+  color: var(--muted);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
 .app-main {
-  max-width: 960px;
+  max-width: 1400px;
   margin: 0 auto;
   padding: 16px;
   display: grid;

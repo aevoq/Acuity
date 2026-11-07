@@ -12,7 +12,8 @@
 import type { AreaPack, GraphEdge, GraphNode, LatLng, Place } from '../contracts';
 import { distance, makeProjection } from '../geo/geo';
 
-export const DEFAULT_PACK_URL = `${import.meta.env.BASE_URL}packs/ucl-east.json`;
+// `import.meta.env` only exists under Vite; the fallback lets Node scripts import this file.
+export const DEFAULT_PACK_URL = `${import.meta.env?.BASE_URL ?? '/'}packs/ucl-east.json`;
 
 export interface PackIndex {
   pack: AreaPack;

@@ -39,6 +39,12 @@ doc "PRD: Offline-first navigation for blind and low vision travellers".
 - **Connectivity** (`src/net`): `connectivity.mode()` is `'offline'` when the browser is offline **or** the on-screen "Wi-Fi off (demo)" switch is on. `useNetworkMode()` for React. **All network calls go through `onlineFetch()`**, which refuses when offline, times out after 8 s, and returns `{ ok: false, reason }` instead of throwing.
 - **Service worker** (`public/sw.js`): caches the page, built assets and the pack. Registered in production builds only, so test offline with `npm run build && npm run preview`. `npm run dev` on localhost also works with Wi-Fi off, since it needs no internet.
 - **Map** (`src/mapview/MapView.tsx`): SVG drawn from the pack, no tiles. Props: `index`, `route`, `position`, `highlights`.
+- **Router** (`src/nav/router.ts`, `costs.ts`): A* over the walking graph, a few ms per route. `router.route(from, to, profile, name)` returns a `Route` with waypoints and a one-sentence `tradeOff` against the shortest route. `router.walkingDistance(a, b)`. Profile costs are in `costs.ts` (PRD F3 values, all multipliers ≥ 1 so the A* heuristic stays valid). `crossingAt()` counts each real crossing once.
+- **Instructions** (`src/nav/instructions.ts`): turns from bearing changes (only where 3+ ways meet, or a sharp bend), crossings with signals/tactile/kerb from OSM tags, benches on the rest-stops profile, start and arrival. Street and landmark names come from the pack only.
+- **Guidance** (`src/nav/guidance.ts`): subscribes to a `PositionSource`, speaks each waypoint at its trigger radius, reassurance every N m (quiet when a waypoint is under 60 m away), off-route after 3 readings > 25 m, poor GPS when accuracy > 30 m. `nextStep()` and `lastPrompt()` back the F4 "what next" and "repeat" intents.
+- **Simulated walk** (`src/sim/simWalk.ts`): a `PositionSource` walking the route at 1.4 m/s × speed with GPS jitter; demo hooks `setSidestep(m)` and `setAccuracy(m)` trigger the off-route and poor-GPS prompts.
+- **Place search** (`src/places/search.ts`): `findPlaces(index, router, from, query)` matches name, brand or everyday kind words ("chemist", "loo", "coffee"), ranked by walking distance.
+- **Speech for now** (`src/app/speakFallback.ts`): plain `speechSynthesis`. `src/voice` replaces it (same `SpeakRequest`).
 
 ## Toolkit
 
@@ -57,4 +63,5 @@ npm run dev          # http://localhost:5173
 npm run typecheck
 npm run build && npm run preview   # production build with the service worker, http://localhost:4173
 npm run pack         # rebuild the area pack from OpenStreetMap (online); --radius, --lat, --lng, --from-cache
+npm run check:nav    # Node smoke test: search, every route profile, a replayed walk through guidance
 ```

@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "lint": "oxlint",
     "typecheck": "tsc -b",
-    "pack": "node scripts/pack/build-pack.mjs"
+    "pack": "node scripts/pack/build-pack.mjs",
+    "check:nav": "npx -y tsx@4.20.6 scripts/check/nav-check.ts"
   },
   "dependencies": {
     "react": "^19.3.1",
