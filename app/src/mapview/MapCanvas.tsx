@@ -62,8 +62,10 @@ export interface MapCanvasProps {
   progress: number | null;
   pins: MapPin[];
   dest: LatLng | null;
-  /** Extra line, e.g. a bus ride stop to stop. */
+  /** Extra line, e.g. a bus ride stop to stop, or a public transport journey. */
   line: LatLng[] | null;
+  /** Stops to mark on that line (default: every point of the line). */
+  lineStops?: LatLng[] | null;
   /** Keep the camera on "me" as it moves. */
   follow: boolean;
   onUserMove: () => void;
@@ -258,11 +260,11 @@ export function MapCanvas(props: MapCanvasProps) {
     src('walked')?.setData(walked.length > 1 ? lineFeature(walked) : EMPTY_FC);
     src('ticks')?.setData(p.route ? pointsFeature(p.route.waypoints.filter((w) => w.kind === 'turn' || w.kind === 'crossing')) : EMPTY_FC);
     src('bus')?.setData(p.line && p.line.length > 1 ? lineFeature(p.line) : EMPTY_FC);
-    src('busStops')?.setData(p.line ? pointsFeature(p.line) : EMPTY_FC);
+    src('busStops')?.setData(p.lineStops ? pointsFeature(p.lineStops) : p.line ? pointsFeature(p.line) : EMPTY_FC);
     src('halo')?.setData(pointsFeature([p.me]));
     syncHalo();
   }
-  useEffect(syncData, [route, progress, line, me.lat, me.lng, me.accuracy]);
+  useEffect(syncData, [route, progress, line, props.lineStops, me.lat, me.lng, me.accuracy]);
 
   // ---- markers
   useEffect(() => {

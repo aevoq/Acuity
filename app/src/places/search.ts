@@ -48,7 +48,8 @@ export function matchScore(place: Place, query: string): number {
     if (isKind || name.includes(q) || brand.includes(q)) return 0.8;
     return 0;
   }
-  if (name === q || brand === q) return 1;
+  // "Stratford station" names a kind: the station beats the toilets called "Stratford Station".
+  if (name === q || brand === q) return isKind ? 1.05 : 1;
   if (brand && (brand.includes(q) || q.includes(brand))) return 0.9;
   if (name.startsWith(q) && !kind) return 0.85;
   // Every query word appears in the name ("tesco express" → "Tesco Express Stratford").

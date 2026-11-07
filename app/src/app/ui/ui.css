@@ -1034,3 +1034,44 @@ dialog.sheet.help {
     display: block;
   }
 }
+
+/* Public transport options */
+.leg-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin-top: 4px;
+}
+.leg-chip-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: #4a4a4a;
+}
+.leg-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 700;
+}
+.leg-chip.walk {
+  background: #f0eee9;
+  color: #333333;
+}
+.leg-chip.ride {
+  background: #0b3d2e;
+  color: #ffffff;
+}
+.row-btn.journey.chosen {
+  background: #eef3fc;
+  box-shadow: inset 4px 0 0 #0050c8;
+  padding-left: 10px;
+}
+a.btn.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}

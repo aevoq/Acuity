@@ -21,6 +21,7 @@ export const ICONS = [
   'remove', 'replay', 'restaurant', 'schedule', 'search', 'settings', 'shopping_cart', 'sms', 'speed', 'stop_circle',
   'storefront', 'straight', 'straighten', 'traffic', 'train', 'turn_left', 'turn_right', 'turn_sharp_left',
   'turn_sharp_right', 'turn_slight_left', 'turn_slight_right', 'u_turn_left', 'warning', 'wc', 'wrong_location',
+  'subway', 'tram', 'commute', 'local_taxi', 'content_copy', 'open_in_new', 'arrow_forward', 'check',
 ];
 
 const OUT = resolve(dirname(fileURLToPath(import.meta.url)), '../../src/assets/fonts/material-symbols-rounded-subset.woff2');

@@ -2,11 +2,13 @@
 // Each card's heading has an id and tabIndex -1: the shell moves focus to it
 // when the card changes, so a screen-reader user hears where they are.
 
+import type { ReactNode } from 'react';
 import type { BusRoute, BusStop, LatLng, Route, RouteProfileId } from '../../contracts';
 import { categoryColor } from '../../mapview/MapCanvas';
 import { PROFILE_LABELS } from '../../nav/costs';
 import { Icon } from './Controls';
 import { catIcon, catLabel, directionFrom, fmtDist, targetName, walkMinutes, type Answer, type ResultItem, type Target } from './model';
+import { TravelChoice, type Travel } from './Transit';
 
 // ---------------------------------------------------------------- Explore
 export interface ExploreCardProps {
@@ -189,6 +191,10 @@ export interface PlaceCardProps {
   onToggleSteps: () => void;
   onBack: () => void;
   bus: BusSetup | null;
+  travel: Travel;
+  onTravel: (t: Travel) => void;
+  /** What to show instead of the walking route, for public transport and taxi. */
+  travelPanel: ReactNode;
 }
 
 export function PlaceCard(p: PlaceCardProps) {
@@ -213,7 +219,11 @@ export function PlaceCard(p: PlaceCardProps) {
         </div>
       </div>
 
-      {route && (
+      <TravelChoice travel={p.travel} onTravel={p.onTravel} />
+
+      {p.travel !== 'walk' && p.travelPanel}
+
+      {p.travel === 'walk' && route && (
         <div className="route-sum">
           <div className="line">
             <span className="route-min">{walkMinutes(route.lengthMeters)} min</span>
@@ -225,8 +235,9 @@ export function PlaceCard(p: PlaceCardProps) {
           {route.tradeOff && <span className="small">{route.tradeOff}</span>}
         </div>
       )}
-      {!route && p.noRouteText && <p className="warn-text">{p.noRouteText}</p>}
+      {p.travel === 'walk' && !route && p.noRouteText && <p className="warn-text">{p.noRouteText}</p>}
 
+      {p.travel === 'walk' && (
       <div className="btn-row">
         <button type="button" className="btn primary big grow" onClick={p.onStart} disabled={!route}>
           <Icon name="directions_walk" />
@@ -237,9 +248,11 @@ export function PlaceCard(p: PlaceCardProps) {
           Steps
         </button>
       </div>
+      )}
 
+      {p.travel !== 'taxi' && (
       <fieldset className="choice-set">
-        <legend>Route type</legend>
+        <legend>{p.travel === 'transit' ? 'Route type (step-free also applies to transport)' : 'Route type'}</legend>
         <div className="choice-row">
           {PROFILE_ORDER.map((id) => (
             <label key={id} className="choice">
@@ -250,8 +263,9 @@ export function PlaceCard(p: PlaceCardProps) {
           ))}
         </div>
       </fieldset>
+      )}
 
-      {p.showSteps && route && (
+      {p.travel === 'walk' && p.showSteps && route && (
         <ol className="rows steps-list" aria-label="Route steps">
           {route.waypoints.map((w) => (
             <li key={w.id}>

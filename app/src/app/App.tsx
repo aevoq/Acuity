@@ -13,7 +13,7 @@
 //  - Help and Settings are native modal dialogs (focus trap, Escape).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { BusRoute, Intent, Position, PositionSource, Route, RouteProfileId, SpeakRequest, ToolResult } from '../contracts';
+import type { BusRoute, Intent, LatLng, Position, PositionSource, Route, RouteProfileId, SpeakRequest, ToolResult } from '../contracts';
 import { distance } from '../geo/geo';
 import { MapCanvas, mapBackground, type MapCanvasHandle, type MapPin } from '../mapview/MapCanvas';
 import { PROFILE_LABELS } from '../nav/costs';
@@ -29,6 +29,9 @@ import { createGpsSource, gpsAvailable } from '../position/gps';
 import { createSimWalk, type SimWalk } from '../sim/simWalk';
 import { busArrivals, routesAt } from '../transit/arrivals';
 import { createBusRide, planBusRide, type BusRidePlan, type BusRideState } from '../transit/busRide';
+import { boardSentence, isRoadVehicle, journeySentence, planJourneys, type Journey } from '../transit/journeys';
+import { destinationText, uberLink } from '../transit/taxi';
+import { RailStepCard, TaxiPanel, TransitPanel, type Travel } from './ui/Transit';
 import { DEFAULT_PROFILE } from './defaultProfile';
 import { quickMatch } from './quickMatch';
 import { runIntent } from './runIntent';
@@ -45,8 +48,8 @@ import './ui/ui.css';
 const VENUE: Position = { lat: 51.537542, lng: -0.0119821, accuracy: 6, heading: null, speed: null, timestamp: 0, source: 'simulated' };
 const BUS_SPEED = 6; // m/s for the simulated bus
 
-type Mode = 'explore' | 'results' | 'place' | 'nav' | 'arrived' | 'ride';
-const HEADING_FOR: Record<Mode, string> = { explore: 'here-h', results: 'res-h', place: 'place-h', nav: 'walk-h', arrived: 'arr-h', ride: 'ride-h' };
+type Mode = 'explore' | 'results' | 'place' | 'nav' | 'arrived' | 'ride' | 'rail';
+const HEADING_FOR: Record<Mode, string> = { explore: 'here-h', results: 'res-h', place: 'place-h', nav: 'walk-h', arrived: 'arr-h', ride: 'ride-h', rail: 'rail-h' };
 /** Intents that are questions (answer card), as opposed to place searches. */
 const QUESTIONS = new Set(['aroundMe', 'leftRight', 'whereAmI', 'nextStep', 'repeat', 'help', 'nearestBusStop', 'busArrivals']);
 
@@ -89,6 +92,14 @@ export function App() {
   const [alightId, setAlightId] = useState<string | null>(null);
   const [ride, setRide] = useState<BusRideState | null>(null);
   const [ridePlan, setRidePlan] = useState<BusRidePlan | null>(null);
+  // public transport + taxi
+  const [travel, setTravel] = useState<Travel>('walk');
+  const [transit, setTransit] = useState<{ key: string; state: 'loading' | 'ok' | 'error'; journeys: Journey[]; message: string | null } | null>(null);
+  const [journeyIdx, setJourneyIdx] = useState(0);
+  const [trip, setTrip] = useState<{ journey: Journey; leg: number } | null>(null);
+  const tripRef = useRef(trip);
+  tripRef.current = trip;
+  const [copied, setCopied] = useState(false);
 
   const sourceRef = useRef<PositionSource | null>(null);
   const guidanceRef = useRef<Guidance | null>(null);
@@ -166,9 +177,19 @@ export function App() {
   useEffect(() => () => stopMoving(), []);
   const sim = () => (sourceRef.current?.kind === 'simulated' ? (sourceRef.current as SimWalk) : null);
 
+  // A walk (or a ride) ended: on a public transport journey, go on to the next leg.
   useEffect(() => {
-    if (gstate?.arrived) setMode('arrived');
+    if (!gstate?.arrived) return;
+    const t = tripRef.current;
+    if (t && t.leg < t.journey.legs.length - 1) nextLegRef.current();
+    else setMode('arrived');
   }, [gstate?.arrived]);
+  useEffect(() => {
+    if (!ride?.arrived || !tripRef.current) return;
+    const id = setTimeout(() => nextLegRef.current(), 1500);
+    return () => clearTimeout(id);
+  }, [ride?.arrived]);
+  const nextLegRef = useRef<() => void>(() => {});
 
   // ---------------------------------------------------------------- routes
   const plan = (t: Target, prof: RouteProfileId, from: Position = meRef.current): Route | null => {
@@ -190,6 +211,10 @@ export function App() {
     setArrivals(null);
     setRideRouteId(null);
     setAlightId(null);
+    setTravel('walk');
+    setTransit(null);
+    setTrip(null);
+    setCopied(false);
     setFollow(false);
     setMode('place');
     const r = plan(t, profileId);
@@ -205,6 +230,8 @@ export function App() {
   const changeProfile = (p: RouteProfileId) => {
     setProfileId(p);
     if (!sel) return;
+    // Step-free changes the public transport options too.
+    if (travel === 'transit' && (p === 'stepFree') !== (profileId === 'stepFree')) void fetchTransit(p === 'stepFree');
     const r = plan(sel, p);
     if (r) {
       mapRef.current?.fitPoints(r.path, 30);
@@ -373,6 +400,7 @@ export function App() {
 
   const endWalk = () => {
     stopMoving();
+    setTrip(null);
     setMode('place');
     setFollow(false);
     if (sel) {
@@ -440,8 +468,13 @@ export function App() {
     if (!index || !stop || !rideRoute || !alightId) return;
     const p = planBusRide(index, rideRoute, stop.id, alightId);
     if (!p) return speak('That bus does not go to that stop from here.');
+    rideWith(p);
+  };
+
+  /** Count down the stops of a ride, following a simulated bus (or real GPS). */
+  const rideWith = (p: BusRidePlan, metresPerSecond = BUS_SPEED) => {
     stopMoving();
-    const src = createSimWalk(p.line, { speed: BUS_SPEED, speedFactor: speed, jitterMeters: 4 });
+    const src: PositionSource = settings.realGps ? createGpsSource() : createSimWalk(p.line, { speed: metresPerSecond, speedFactor: speed, jitterMeters: 4 });
     unsubRef.current = src.subscribe(setMe);
     const r = createBusRide({ plan: p, source: src, onSpeak: speak, onState: setRide });
     sourceRef.current = src;
@@ -456,8 +489,125 @@ export function App() {
 
   const endRide = () => {
     stopMoving();
+    setTrip(null);
     setMode('place');
     setFollow(false);
+  };
+
+  // ---------------------------------------------------------------- public transport (TfL, online)
+  const transitKey = sel ? `${sel.id}|${profileId === 'stepFree'}` : '';
+
+  const fetchTransit = async (stepFree = profileId === 'stepFree') => {
+    if (!index || !sel) return;
+    const key = `${sel.id}|${stepFree}`;
+    setTransit({ key, state: 'loading', journeys: [], message: null });
+    setJourneyIdx(0);
+    const r = await planJourneys(index, meRef.current, sel, { stepFree });
+    if (!r.ok) {
+      setTransit({ key, state: 'error', journeys: [], message: r.message });
+      speak(r.message);
+      return;
+    }
+    setTransit({ key, state: 'ok', journeys: r.journeys, message: null });
+    speak(`${r.journeys.length} option${r.journeys.length === 1 ? '' : 's'}. Fastest: ${journeySentence(r.journeys[0])}`);
+    mapRef.current?.fitPoints(r.journeys[0].legs.flatMap((l) => l.path), 30);
+  };
+
+  const onTravel = (t: Travel) => {
+    setTravel(t);
+    if (t === 'transit' && (!transit || transit.key !== transitKey)) void fetchTransit();
+    if (t === 'transit' && transit?.state === 'ok') speak(journeySentence(transit.journeys[journeyIdx]));
+    if (t === 'taxi') speak(net === 'offline' ? 'Taxi apps need a connection.' : `Taxi: open Uber with the trip to ${sel ? targetName(sel) : 'here'} filled in, or copy the destination. You book in the taxi app.`);
+    if (t === 'walk' && route) speak(routeSentence(route));
+  };
+
+  const journey = transit?.state === 'ok' ? (transit.journeys[journeyIdx] ?? null) : null;
+
+  /** A walking Route along TfL's own path, when our router can't (outside the downloaded area). */
+  const pathRoute = (path: LatLng[], name: string): Route => {
+    const len = path.reduce((acc, p, i) => (i ? acc + distance(path[i - 1], p) : 0), 0);
+    const wp = (kind: 'start' | 'arrive', at: LatLng, along: number, instruction: string) => ({
+      id: kind, kind, lat: at.lat, lng: at.lng, triggerRadius: kind === 'arrive' ? 15 : 0, instruction, distanceAlong: along,
+      milestone: kind === 'arrive' ? ('arrived' as const) : null, icon: kind === 'arrive' ? 'flag' : 'directions_walk',
+      title: kind === 'arrive' ? `Arrive at ${name}` : `Walk to ${name}`, detail: kind === 'arrive' ? '' : 'Route from TfL',
+    });
+    return {
+      profile: 'shortest', from: path[0], to: path[path.length - 1], destinationName: name, path, edgeIds: [],
+      lengthMeters: Math.round(len), durationSeconds: Math.round(len / 1.4), crossings: 0, signalledCrossings: 0, tradeOff: null,
+      waypoints: [wp('start', path[0], 0, `Walk to ${name}, ${Math.round(len / 10) * 10} metres.`), wp('arrive', path[path.length - 1], Math.round(len), `You have arrived at ${name}.`)],
+    };
+  };
+
+  const startLeg = (j: Journey, i: number, from: LatLng = meRef.current) => {
+    const leg = j.legs[i];
+    setTrip({ journey: j, leg: i });
+    if (!leg) {
+      stopMoving();
+      setMode('arrived');
+      return;
+    }
+    if (leg.mode === 'walking') {
+      const last = i === j.legs.length - 1;
+      const name = last && sel ? targetName(sel) : [leg.to.name, leg.to.indicator].filter(Boolean).join(', ');
+      const r = router?.route({ ...from }, leg.to, profileId, name) ?? (leg.path.length > 1 ? pathRoute(leg.path, name) : null);
+      if (!r) return speak(`I can't find a walking route to ${name}.`);
+      setRoute(r);
+      startWalk(r);
+      return;
+    }
+    speak(boardSentence(leg));
+    const stops = [{ name: leg.from.name, at: { lat: leg.from.lat, lng: leg.from.lng }, id: leg.from.naptanId }, ...leg.stops].filter((st) => st.at);
+    if (isRoadVehicle(leg.mode) && stops.length >= 2) {
+      // Bus or tram: count the stops down by GPS (positions from the pack, the last from TfL).
+      const plan: BusRidePlan = {
+        route: { id: `${leg.line}-trip`, name: leg.line ?? 'bus', direction: '', stops: [], frequencyMinutes: null, destination: leg.towards ?? undefined },
+        stops: stops.map((st, k) => ({ id: st.id ?? `trip-${k}`, name: st.name, naptanId: st.id, lat: st.at!.lat, lng: st.at!.lng, indicator: k === 0 ? leg.from.indicator : null })),
+        line: stops.map((st) => st.at!),
+      };
+      rideWith(plan);
+      return;
+    }
+    // Tube, DLR, Overground, rail: no GPS underground, so the person says when they are off.
+    stopMoving();
+    setRidePlan(null);
+    setFollow(false);
+    setMode('rail');
+    mapRef.current?.fitPoints(leg.path.length ? leg.path : [leg.from, leg.to], 40);
+    speak('There is no GPS underground. Count the stops or listen for the announcements, and press "I\'m off" when you are.');
+  };
+
+  nextLegRef.current = () => {
+    const t = tripRef.current;
+    if (!t) return;
+    const leg = t.journey.legs[t.leg];
+    startLeg(t.journey, t.leg + 1, leg ? leg.to : meRef.current);
+  };
+
+  const startJourney = () => {
+    if (!journey) return;
+    speak(`Starting: ${journeySentence(journey)}`);
+    startLeg(journey, 0);
+  };
+
+  const railArrived = () => {
+    const t = tripRef.current;
+    if (!t) return;
+    const leg = t.journey.legs[t.leg];
+    // Back above ground at the station: start from there.
+    setMe({ ...meRef.current, lat: leg.to.lat, lng: leg.to.lng, heading: null });
+    speak(`At ${leg.to.name}.`);
+    nextLegRef.current();
+  };
+
+  const copyDestination = async () => {
+    if (!sel) return;
+    try {
+      await navigator.clipboard.writeText(destinationText(targetName(sel), sel));
+      setCopied(true);
+      speak('Destination copied. Paste it into any taxi app, or read it to the driver.');
+    } catch {
+      speak(`Could not copy. The destination is ${targetName(sel)}.`);
+    }
   };
 
   const busSetup: BusSetup | null = stop
@@ -498,7 +648,7 @@ export function App() {
     mode === 'results'
       ? results.map((r, i) => ({ at: r.target, n: i + 1, label: `${i + 1}. ${targetName(r.target)}, ${fmtDist(r.walk)}`, onClick: () => choose(r.target) }))
       : [];
-  const showRoute = !!route && (mode === 'place' || mode === 'nav' || mode === 'arrived');
+  const showRoute = !!route && ((mode === 'place' && travel === 'walk') || mode === 'nav' || mode === 'arrived');
   const dest = sel && (mode === 'place' || mode === 'nav' || mode === 'arrived') ? sel : null;
 
   let banner = null;
@@ -514,6 +664,16 @@ export function App() {
         title={nextWp.title ?? nextWp.instruction}
         sub={nextWp.detail}
         then={thenWp && thenWp.kind !== 'start' ? { icon: thenWp.icon ?? 'straight', title: thenWp.title ?? '' } : null}
+      />
+    );
+  } else if (mode === 'rail' && trip) {
+    const leg = trip.journey.legs[trip.leg];
+    banner = (
+      <NavBanner
+        icon={leg.mode === 'tube' ? 'subway' : 'train'}
+        dist={`${leg.stops.length} stops`}
+        title={`${leg.line ?? ''}${leg.mode === 'tube' ? ' line' : ''}${leg.towards ? ` towards ${leg.towards}` : ''}`}
+        sub={`Get off at ${leg.to.name}`}
       />
     );
   } else if (mode === 'ride' && ride && ridePlan) {
@@ -545,7 +705,24 @@ export function App() {
           progress={walking ? progress : null}
           pins={pins}
           dest={dest}
-          line={mode === 'ride' && ridePlan ? ridePlan.line : null}
+          line={
+            mode === 'ride' && ridePlan
+              ? ridePlan.line
+              : mode === 'place' && travel === 'transit' && journey
+                ? journey.legs.flatMap((l) => l.path)
+                : mode === 'rail' && trip
+                  ? (trip.journey.legs[trip.leg]?.path ?? null)
+                  : null
+          }
+          lineStops={
+            mode === 'ride' && ridePlan
+              ? ridePlan.line
+              : mode === 'place' && travel === 'transit' && journey
+                ? journey.legs.filter((l) => l.mode !== 'walking').flatMap((l) => [l.from, l.to])
+                : mode === 'rail' && trip
+                  ? [trip.journey.legs[trip.leg].from, trip.journey.legs[trip.leg].to]
+                  : null
+          }
           follow={follow}
           onUserMove={() => setFollow(false)}
           uiZoom={uiZoom}
@@ -575,7 +752,7 @@ export function App() {
       </div>
 
       <div className="left-col" style={{ zoom: uiZoom }}>
-        {mode !== 'nav' && mode !== 'ride' && mode !== 'arrived' ? (
+        {mode !== 'nav' && mode !== 'ride' && mode !== 'rail' && mode !== 'arrived' ? (
           <div className="top-stack">
             <SearchBar query={query} onQuery={setQuery} onSubmit={submit} onClear={clearSearch} busy={busy} />
             <CategoryChips active={mode === 'results' ? chip : null} onPick={pickChip} />
@@ -614,13 +791,43 @@ export function App() {
                 } else finish();
               }}
               bus={busSetup}
+              travel={travel}
+              onTravel={onTravel}
+              travelPanel={
+                travel === 'transit' ? (
+                  <TransitPanel
+                    state={transit?.state ?? 'loading'}
+                    journeys={transit?.journeys ?? []}
+                    message={transit?.message ?? null}
+                    selected={journeyIdx}
+                    onSelect={(i) => {
+                      setJourneyIdx(i);
+                      const jj = transit?.journeys[i];
+                      if (jj) {
+                        speak(journeySentence(jj));
+                        mapRef.current?.fitPoints(jj.legs.flatMap((l) => l.path), 30);
+                      }
+                    }}
+                    onStart={startJourney}
+                    stepFree={profileId === 'stepFree'}
+                  />
+                ) : travel === 'taxi' ? (
+                  <TaxiPanel
+                    offline={net === 'offline'}
+                    uberHref={uberLink(me, sel, targetName(sel))}
+                    destination={destinationText(targetName(sel), sel)}
+                    copied={copied}
+                    onCopy={copyDestination}
+                  />
+                ) : null
+              }
             />
           )}
 
           {walking && (
             <WalkCard
               minutes={`${walkMinutes(remaining)} min`}
-              meta={`${fmtDist(remaining)} · arrive ${arrive}`}
+              meta={`${fmtDist(remaining)} · arrive ${arrive}${trip ? ` · step ${trip.leg + 1} of ${trip.journey.legs.length}` : ''}`}
               simulated={sourceRef.current?.kind === 'simulated'}
               paused={paused}
               offRoute={!!gstate?.offRoute}
@@ -640,9 +847,20 @@ export function App() {
           {mode === 'ride' && ridePlan && (
             <RideCard
               title={ride?.arrived ? 'At your stop' : `${ride?.stopsLeft ?? ridePlan.stops.length - 1} stops to go`}
-              meta={`Bus ${ridePlan.route.name} to ${ridePlan.route.destination ?? ''}`}
+              meta={`Bus ${ridePlan.route.name}${ridePlan.route.destination ? ` to ${ridePlan.route.destination}` : ''}${trip ? ` · step ${trip.leg + 1} of ${trip.journey.legs.length}` : ''}`}
               speed={speed}
               onSpeed={changeSpeed}
+              onEnd={endRide}
+              onRepeat={() => speak(lastSaid.current ?? 'Nothing to repeat yet.')}
+            />
+          )}
+
+          {mode === 'rail' && trip && (
+            <RailStepCard
+              leg={trip.journey.legs[trip.leg]}
+              legNo={trip.leg + 1}
+              legs={trip.journey.legs.length}
+              onArrived={railArrived}
               onEnd={endRide}
               onRepeat={() => speak(lastSaid.current ?? 'Nothing to repeat yet.')}
             />
