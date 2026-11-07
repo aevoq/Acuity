@@ -3,5 +3,6 @@
 import { handleGemini } from '../server/gemini.js';
 
 export async function POST(request: Request): Promise<Response> {
-  return handleGemini(request, { GEMINI_API_KEY: process.env.GEMINI_API_KEY, GEMINI_MODEL: process.env.GEMINI_MODEL });
+  const { GEMINI_API_KEY, GEMINI_PROXY_KEY, GEMINI_BASE_URL, GEMINI_MODEL } = process.env;
+  return handleGemini(request, { GEMINI_API_KEY, GEMINI_PROXY_KEY, GEMINI_BASE_URL, GEMINI_MODEL });
 }

@@ -35,6 +35,11 @@ function geminiApi(env: GeminiEnv): Plugin {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), ''); // '' = also load non-VITE_ vars, server side only
   return {
-    plugins: [react(), geminiApi({ GEMINI_API_KEY: env.GEMINI_API_KEY, GEMINI_MODEL: env.GEMINI_MODEL })],
+    plugins: [react(), geminiApi({
+        GEMINI_API_KEY: env.GEMINI_API_KEY,
+        GEMINI_PROXY_KEY: env.GEMINI_PROXY_KEY,
+        GEMINI_BASE_URL: env.GEMINI_BASE_URL,
+        GEMINI_MODEL: env.GEMINI_MODEL,
+      }),],
   };
 });

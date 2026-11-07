@@ -16,6 +16,8 @@ export const GEMINI_ENDPOINT = `${import.meta.env?.BASE_URL ?? '/'}api/gemini`;
 export interface GeminiPart {
   text?: string;
   inlineData?: { mimeType: string; data: string };
+  /** True for the model's thinking parts, which are never shown or spoken. */
+  thought?: boolean;
   functionCall?: { name: string; args?: Record<string, unknown> };
 }
 
@@ -45,7 +47,7 @@ export function callGemini(body: GeminiRequest, timeoutMs = 15000): Promise<Onli
 /** Text of the first candidate, or null. */
 export function geminiText(r: GeminiResponse): string | null {
   const parts = r.candidates?.[0]?.content?.parts ?? [];
-  const text = parts.map((p) => p.text ?? '').join('').trim();
+  const text = parts.filter((p) => !p.thought).map((p) => p.text ?? '').join('').trim();
   return text || null;
 }
 
